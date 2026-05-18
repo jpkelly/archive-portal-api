@@ -587,7 +587,15 @@ els.messageNextBtn.addEventListener('click', async () => {
   await loadMessages(state.folderId);
 });
 
-els.logoutBtn.addEventListener('click', () => {
+els.logoutBtn.addEventListener('click', async () => {
+  try {
+    if (state.token) {
+      await api('/auth/logout', { method: 'POST' });
+    }
+  } catch (_) {
+    // Continue with local logout even if server-side cleanup fails.
+  }
+
   localStorage.removeItem('archivePortalToken');
   state.token = '';
   state.user = null;

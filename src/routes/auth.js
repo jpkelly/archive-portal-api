@@ -1,11 +1,18 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
 const { query } = require('../db');
 const { jwtSecret, jwtExpiresIn } = require('../config');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+
+function userTempArchiveDir(userId) {
+  return path.join(os.tmpdir(), 'archive-portal-cache', userId);
+}
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
@@ -69,6 +76,16 @@ router.get('/me', requireAuth, async (req, res) => {
     return res.json({ user });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch profile', detail: err.message });
+  }
+});
+
+router.post('/logout', requireAuth, async (req, res) => {
+  try {
+    const dir = userTempArchiveDir(req.auth.sub);
+    await fs.rm(dir, { recursive: true, force: true });
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not complete logout cleanup', detail: err.message });
   }
 });
 
