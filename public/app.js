@@ -20,6 +20,7 @@ const state = {
 const els = {
   loginCard: document.getElementById('loginCard'),
   loginForm: document.getElementById('loginForm'),
+  loginBtn: document.querySelector('#loginForm button[type="submit"]'),
   email: document.getElementById('email'),
   password: document.getElementById('password'),
   portal: document.getElementById('portal'),
@@ -55,6 +56,12 @@ const els = {
 
 function setStatus(message) {
   els.status.textContent = message || '';
+}
+
+function setLoginBusy(busy) {
+  if (!els.loginBtn) return;
+  els.loginBtn.disabled = busy;
+  els.loginBtn.textContent = busy ? 'Signing in...' : 'Sign in';
 }
 
 function clearList(listEl, emptyText) {
@@ -457,6 +464,7 @@ async function bootstrapFromToken() {
 els.loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   setStatus('');
+  setLoginBusy(true);
 
   try {
     const payload = {
@@ -480,6 +488,8 @@ els.loginForm.addEventListener('submit', async (event) => {
     els.password.value = '';
   } catch (err) {
     setStatus(err.message);
+  } finally {
+    setLoginBusy(false);
   }
 });
 

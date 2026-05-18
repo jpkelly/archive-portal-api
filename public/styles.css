@@ -84,6 +84,11 @@ input {
   cursor: pointer;
 }
 
+.button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
 .button.ghost {
   background: #e8eef5;
   color: #2a3a4e;
