@@ -1,8 +1,11 @@
 const express = require('express');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const { query } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+const execFileAsync = promisify(execFile);
 
 router.use(requireAuth);
 
@@ -21,6 +24,29 @@ async function canAccessDomain(userId, domainId, role) {
     [userId, domainId]
   );
   return Boolean(access.length);
+}
+
+function escapeSqlLiteral(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+async function syncDomainAccountsFromPlesk(domainName) {
+  const safeDomain = escapeSqlLiteral(domainName);
+  const sql = [
+    'INSERT INTO mail_archive.mail_accounts',
+    '  (id, domain_id, username, display_name, source_path, message_count, folder_count, created_at, updated_at)',
+    'SELECT UUID(), d.id, CONCAT(m.mail_name, "@", pd.name), m.mail_name, "plesk-mailbox-sync", 0, 0, NOW(), NOW()',
+    'FROM psa.mail m',
+    'JOIN psa.domains pd ON pd.id = m.dom_id',
+    'JOIN mail_archive.domains d ON d.name = pd.name',
+    'LEFT JOIN mail_archive.mail_accounts a',
+    '  ON a.domain_id = d.id AND a.username = CONCAT(m.mail_name, "@", pd.name)',
+    `WHERE pd.name = '${safeDomain}'`,
+    '  AND m.postbox = "true"',
+    '  AND a.id IS NULL',
+  ].join(' ');
+
+  await execFileAsync('sudo', ['plesk', 'db', '-e', sql], { maxBuffer: 1024 * 1024 });
 }
 
 router.get('/', async (req, res) => {
@@ -165,6 +191,42 @@ router.get('/:domainId/accounts', async (req, res) => {
     return res.json({ accounts });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch accounts', detail: err.message });
+  }
+});
+
+router.post('/:domainId/accounts/sync', async (req, res) => {
+  const { domainId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const domains = await query(
+      'SELECT id, name FROM domains WHERE id = ? LIMIT 1',
+      [domainId]
+    );
+    const domain = domains[0];
+    if (!domain) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const beforeRows = await query(
+      'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
+      [domain.id]
+    );
+    const beforeCount = Number(beforeRows[0] && beforeRows[0].count ? beforeRows[0].count : 0);
+
+    await syncDomainAccountsFromPlesk(domain.name);
+
+    const afterRows = await query(
+      'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
+      [domain.id]
+    );
+    const afterCount = Number(afterRows[0] && afterRows[0].count ? afterRows[0].count : 0);
+    const inserted = Math.max(0, afterCount - beforeCount);
+
+    return res.json({ ok: true, domain: domain.name, inserted, total: afterCount });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not sync domain accounts', detail: err.message });
   }
 });
 

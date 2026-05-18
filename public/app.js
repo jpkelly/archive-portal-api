@@ -48,6 +48,7 @@ const els = {
   adminDomainSelect: document.getElementById('adminDomainSelect'),
   adminDomainStatus: document.getElementById('adminDomainStatus'),
   adminSaveDomainBtn: document.getElementById('adminSaveDomainBtn'),
+  adminSyncAccountsBtn: document.getElementById('adminSyncAccountsBtn'),
   adminMemberEmail: document.getElementById('adminMemberEmail'),
   adminMemberPermission: document.getElementById('adminMemberPermission'),
   adminAddMemberBtn: document.getElementById('adminAddMemberBtn'),
@@ -525,6 +526,28 @@ els.adminSaveDomainBtn.addEventListener('click', async () => {
   });
   await loadDomains();
   await loadAdminDomain(state.selectedDomain.id);
+});
+
+els.adminSyncAccountsBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  const button = els.adminSyncAccountsBtn;
+  const originalText = button.textContent;
+
+  button.disabled = true;
+  button.textContent = 'Refreshing...';
+
+  try {
+    const data = await api(`/domains/${state.selectedDomain.id}/accounts/sync`, {
+      method: 'POST',
+    });
+    await loadAccounts(state.selectedDomain.id);
+    setStatus(`Refreshed ${data.domain}: +${data.inserted} accounts (${data.total} total).`);
+  } catch (err) {
+    setStatus(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
 });
 
 els.adminAddMemberBtn.addEventListener('click', async () => {
