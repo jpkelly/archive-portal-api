@@ -200,6 +200,57 @@ input {
   margin: 0;
 }
 
+.admin-note {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-top: 10px;
+}
+
+.admin-grid label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.9rem;
+}
+
+.admin-grid input,
+.admin-grid select {
+  width: 100%;
+}
+
+.admin-actions {
+  display: flex;
+  align-items: end;
+}
+
+.admin-subhead {
+  margin: 14px 0 8px;
+}
+
+.admin-member-list {
+  max-height: 220px;
+}
+
+.admin-member {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.admin-member span {
+  word-break: break-word;
+}
+
 .view-toggle {
   display: flex;
   gap: 0;
@@ -330,5 +381,9 @@ input {
 
   .panel.wide {
     grid-column: span 1;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
   }
 }

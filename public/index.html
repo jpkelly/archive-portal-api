@@ -84,6 +84,53 @@
           <article id="messageDetail" class="detail muted">Select a message to view details.</article>
           <div id="messageDetailEmail" class="email-view hidden"></div>
         </section>
+
+        <section id="adminPanel" class="panel wide hidden">
+          <div class="detail-header">
+            <h3>Domain Management</h3>
+            <p class="muted admin-note">Master Admin controls for status and access.</p>
+          </div>
+
+          <div class="admin-grid">
+            <label>
+              Domain
+              <select id="adminDomainSelect"></select>
+            </label>
+
+            <label>
+              Status
+              <select id="adminDomainStatus">
+                <option value="active">active</option>
+                <option value="archived">archived</option>
+                <option value="restricted">restricted</option>
+              </select>
+            </label>
+
+            <div class="admin-actions">
+              <button id="adminSaveDomainBtn" class="button" type="button">Save Domain</button>
+            </div>
+
+            <label>
+              Add Member Email
+              <input id="adminMemberEmail" type="email" placeholder="user@example.com" />
+            </label>
+
+            <label>
+              Permission
+              <select id="adminMemberPermission">
+                <option value="read">read</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+
+            <div class="admin-actions">
+              <button id="adminAddMemberBtn" class="button" type="button">Add Access</button>
+            </div>
+          </div>
+
+          <h4 class="admin-subhead">Domain Members</h4>
+          <ul id="adminDomainMembers" class="list admin-member-list"></ul>
+        </section>
       </section>
 
       <p id="status" class="status"></p>

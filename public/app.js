@@ -12,6 +12,9 @@ const state = {
   messageQuery: '',
   messageDateFrom: '',
   messageDateTo: '',
+  domains: [],
+  selectedDomain: null,
+  selectedMembers: [],
 };
 
 const els = {
@@ -40,6 +43,14 @@ const els = {
   viewToggle: document.getElementById('viewToggle'),
   togglePlain: document.getElementById('togglePlain'),
   toggleEmail: document.getElementById('toggleEmail'),
+  adminPanel: document.getElementById('adminPanel'),
+  adminDomainSelect: document.getElementById('adminDomainSelect'),
+  adminDomainStatus: document.getElementById('adminDomainStatus'),
+  adminSaveDomainBtn: document.getElementById('adminSaveDomainBtn'),
+  adminMemberEmail: document.getElementById('adminMemberEmail'),
+  adminMemberPermission: document.getElementById('adminMemberPermission'),
+  adminAddMemberBtn: document.getElementById('adminAddMemberBtn'),
+  adminDomainMembers: document.getElementById('adminDomainMembers'),
 };
 
 function setStatus(message) {
@@ -132,22 +143,79 @@ function renderAuthState() {
   els.loginCard.classList.toggle('hidden', isLoggedIn);
   els.portal.classList.toggle('hidden', !isLoggedIn);
   els.logoutBtn.classList.toggle('hidden', !isLoggedIn);
+  els.adminPanel.classList.toggle('hidden', !(state.user && state.user.role === 'admin'));
   if (state.user) {
     const primary = state.user.primary_email || state.user.email;
     const login = state.user.primary_email && state.user.primary_email !== state.user.email
       ? ` (${state.user.email})`
       : '';
-    els.currentUser.textContent = `${primary}${login} (${state.user.role})`;
+    const roleLabel = state.user.role === 'admin' ? 'Master Admin' : state.user.role;
+    els.currentUser.textContent = `${primary}${login} (${roleLabel})`;
   } else {
     els.currentUser.textContent = '';
   }
 }
 
+function renderAdminMembers() {
+  const members = state.selectedMembers || [];
+  if (!members.length) {
+    clearList(els.adminDomainMembers, 'No members found.');
+    return;
+  }
+
+  els.adminDomainMembers.innerHTML = '';
+  members.forEach((member) => {
+    const li = document.createElement('li');
+    li.className = 'admin-member';
+    const text = document.createElement('span');
+    const primary = member.primary_email && member.primary_email !== member.email
+      ? ` | ${member.primary_email}`
+      : '';
+    text.textContent = `${member.email}${primary} (${member.permission})`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'button ghost';
+    button.textContent = 'Remove';
+    button.addEventListener('click', async () => {
+      if (!state.selectedDomain) return;
+      await api(`/domains/${state.selectedDomain.id}/members/${member.id}`, { method: 'DELETE' });
+      await loadAdminDomain(state.selectedDomain.id);
+    });
+    li.appendChild(text);
+    li.appendChild(button);
+    els.adminDomainMembers.appendChild(li);
+  });
+}
+
+function populateAdminControls(domain) {
+  els.adminDomainSelect.innerHTML = '';
+  state.domains.forEach((d) => {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = `${d.name} (${d.status})`;
+    if (domain && d.id === domain.id) opt.selected = true;
+    els.adminDomainSelect.appendChild(opt);
+  });
+  els.adminDomainStatus.value = domain ? domain.status : 'active';
+}
+
+async function loadAdminDomain(domainId) {
+  const data = await api(`/domains/${domainId}`);
+  state.selectedDomain = data.domain;
+  state.selectedMembers = data.members || [];
+  populateAdminControls(data.domain);
+  renderAdminMembers();
+}
+
 async function loadDomains() {
   const data = await api('/domains');
+  state.domains = data.domains || [];
+  if (state.user && state.user.role === 'admin') {
+    populateAdminControls(state.selectedDomain);
+  }
   renderButtonList(
     els.domainList,
-    data.domains || [],
+    state.domains,
     (d) => `${d.name} (${d.status})`,
     async (domain) => {
       state.domainId = domain.id;
@@ -156,6 +224,9 @@ async function loadDomains() {
       clearList(els.folderList, 'Select an account first.');
       resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
+      if (state.user && state.user.role === 'admin') {
+        await loadAdminDomain(domain.id);
+      }
       await loadAccounts(domain.id);
     }
   );
@@ -422,6 +493,43 @@ els.toggleEmail.addEventListener('click', () => {
   applyViewMode();
 });
 
+els.adminDomainSelect.addEventListener('change', async () => {
+  if (!state.user || state.user.role !== 'admin') return;
+  const domain = state.domains.find((d) => d.id === els.adminDomainSelect.value);
+  if (!domain) return;
+  state.domainId = domain.id;
+  state.accountId = null;
+  state.folderId = null;
+  clearList(els.accountList, 'Select a domain first.');
+  clearList(els.folderList, 'Select an account first.');
+  resetMessageView('Select a folder first.');
+  await loadAdminDomain(domain.id);
+  await loadAccounts(domain.id);
+});
+
+els.adminSaveDomainBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  await api(`/domains/${state.selectedDomain.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: els.adminDomainStatus.value }),
+  });
+  await loadDomains();
+  await loadAdminDomain(state.selectedDomain.id);
+});
+
+els.adminAddMemberBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  const email = els.adminMemberEmail.value.trim();
+  const permission = els.adminMemberPermission.value;
+  if (!email) return;
+  await api(`/domains/${state.selectedDomain.id}/members`, {
+    method: 'POST',
+    body: JSON.stringify({ email, permission }),
+  });
+  els.adminMemberEmail.value = '';
+  await loadAdminDomain(state.selectedDomain.id);
+});
+
 els.messageSearchBtn.addEventListener('click', async () => {
   if (!state.folderId) return;
   state.messageQuery = els.messageSearch.value.trim();
@@ -477,6 +585,8 @@ els.logoutBtn.addEventListener('click', () => {
   state.accountId = null;
   state.folderId = null;
   state.currentMessage = null;
+  state.selectedDomain = null;
+  state.selectedMembers = [];
   renderAuthState();
   clearList(els.domainList, 'Log in to load domains.');
   clearList(els.accountList, 'Select a domain first.');
