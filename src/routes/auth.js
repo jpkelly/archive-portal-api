@@ -15,10 +15,17 @@ router.post('/login', async (req, res) => {
   }
 
   try {
-    const rows = await query(
-      'SELECT id, email, password_hash, role FROM users WHERE email = ? LIMIT 1',
+    let rows = await query(
+      'SELECT id, email, primary_email, password_hash, role FROM users WHERE email = ? LIMIT 1',
       [email]
     );
+
+    if (!rows.length) {
+      rows = await query(
+        'SELECT id, email, primary_email, password_hash, role FROM users WHERE primary_email = ? LIMIT 1',
+        [email]
+      );
+    }
 
     const user = rows[0];
     if (!user || !user.password_hash) {
@@ -40,7 +47,7 @@ router.post('/login', async (req, res) => {
 
     return res.json({
       token,
-      user: { id: user.id, email: user.email, role: user.role },
+      user: { id: user.id, email: user.email, primary_email: user.primary_email, role: user.role },
     });
   } catch (err) {
     return res.status(500).json({ error: 'Login failed', detail: err.message });
@@ -50,7 +57,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const rows = await query(
-      'SELECT id, email, role, created_at, last_login_at FROM users WHERE id = ? LIMIT 1',
+      'SELECT id, email, primary_email, role, created_at, last_login_at FROM users WHERE id = ? LIMIT 1',
       [req.auth.sub]
     );
 

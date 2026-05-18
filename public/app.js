@@ -132,7 +132,15 @@ function renderAuthState() {
   els.loginCard.classList.toggle('hidden', isLoggedIn);
   els.portal.classList.toggle('hidden', !isLoggedIn);
   els.logoutBtn.classList.toggle('hidden', !isLoggedIn);
-  els.currentUser.textContent = state.user ? `${state.user.email} (${state.user.role})` : '';
+  if (state.user) {
+    const primary = state.user.primary_email || state.user.email;
+    const login = state.user.primary_email && state.user.primary_email !== state.user.email
+      ? ` (${state.user.email})`
+      : '';
+    els.currentUser.textContent = `${primary}${login} (${state.user.role})`;
+  } else {
+    els.currentUser.textContent = '';
+  }
 }
 
 async function loadDomains() {
