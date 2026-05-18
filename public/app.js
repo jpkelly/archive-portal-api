@@ -93,7 +93,7 @@ function resetMessageView(emptyText) {
   els.messageDateFrom.value = '';
   els.messageDateTo.value = '';
   clearList(els.messageList, emptyText);
-  els.messagePageInfo.textContent = emptyText;
+  els.messagePageInfo.textContent = '';
   els.messagePrevBtn.disabled = true;
   els.messageNextBtn.disabled = true;
 }
