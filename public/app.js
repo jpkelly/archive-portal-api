@@ -537,8 +537,9 @@ els.adminSyncAccountsBtn.addEventListener('click', async () => {
   button.textContent = 'Refreshing...';
 
   try {
-    const data = await api(`/domains/${state.selectedDomain.id}/accounts/sync`, {
-      method: 'POST',
+    const data = await api(`/domains/${state.selectedDomain.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ syncAccounts: true }),
     });
     await loadAccounts(state.selectedDomain.id);
     setStatus(`Refreshed ${data.domain}: +${data.inserted} accounts (${data.total} total).`);

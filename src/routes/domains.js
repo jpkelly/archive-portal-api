@@ -104,16 +104,54 @@ router.get('/:domainId', async (req, res) => {
 
 router.patch('/:domainId', async (req, res) => {
   const { domainId } = req.params;
-  const { status } = req.body || {};
+  const { status, syncAccounts } = req.body || {};
 
   try {
     if (!requireAdmin(req, res)) return;
-    if (!['active', 'archived', 'restricted'].includes(status)) {
-      return res.status(400).json({ error: 'Invalid domain status' });
+
+    const domains = await query(
+      'SELECT id, name FROM domains WHERE id = ? LIMIT 1',
+      [domainId]
+    );
+    const domain = domains[0];
+    if (!domain) {
+      return res.status(404).json({ error: 'Domain not found' });
     }
 
-    await query('UPDATE domains SET status = ? WHERE id = ?', [status, domainId]);
-    return res.json({ ok: true });
+    const result = { ok: true, domain: domain.name };
+
+    if (typeof status !== 'undefined') {
+      if (!['active', 'archived', 'restricted'].includes(status)) {
+        return res.status(400).json({ error: 'Invalid domain status' });
+      }
+      await query('UPDATE domains SET status = ? WHERE id = ?', [status, domainId]);
+      result.status = status;
+    }
+
+    if (syncAccounts === true) {
+      const beforeRows = await query(
+        'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
+        [domain.id]
+      );
+      const beforeCount = Number(beforeRows[0] && beforeRows[0].count ? beforeRows[0].count : 0);
+
+      await syncDomainAccountsFromPlesk(domain.name);
+
+      const afterRows = await query(
+        'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
+        [domain.id]
+      );
+      const afterCount = Number(afterRows[0] && afterRows[0].count ? afterRows[0].count : 0);
+
+      result.inserted = Math.max(0, afterCount - beforeCount);
+      result.total = afterCount;
+    }
+
+    if (typeof status === 'undefined' && syncAccounts !== true) {
+      return res.status(400).json({ error: 'No updates requested' });
+    }
+
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Could not update domain', detail: err.message });
   }
@@ -191,42 +229,6 @@ router.get('/:domainId/accounts', async (req, res) => {
     return res.json({ accounts });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch accounts', detail: err.message });
-  }
-});
-
-router.post('/:domainId/accounts/sync', async (req, res) => {
-  const { domainId } = req.params;
-
-  try {
-    if (!requireAdmin(req, res)) return;
-
-    const domains = await query(
-      'SELECT id, name FROM domains WHERE id = ? LIMIT 1',
-      [domainId]
-    );
-    const domain = domains[0];
-    if (!domain) {
-      return res.status(404).json({ error: 'Domain not found' });
-    }
-
-    const beforeRows = await query(
-      'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
-      [domain.id]
-    );
-    const beforeCount = Number(beforeRows[0] && beforeRows[0].count ? beforeRows[0].count : 0);
-
-    await syncDomainAccountsFromPlesk(domain.name);
-
-    const afterRows = await query(
-      'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
-      [domain.id]
-    );
-    const afterCount = Number(afterRows[0] && afterRows[0].count ? afterRows[0].count : 0);
-    const inserted = Math.max(0, afterCount - beforeCount);
-
-    return res.json({ ok: true, domain: domain.name, inserted, total: afterCount });
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not sync domain accounts', detail: err.message });
   }
 });
 
