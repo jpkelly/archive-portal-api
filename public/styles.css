@@ -124,9 +124,23 @@ input {
   gap: 6px;
 }
 
+.inline-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .messages-tools input {
   min-width: 230px;
   padding: 7px 10px;
+}
+
+.inline-filter input {
+  min-width: 0;
+  width: 145px;
+  padding: 6px 8px;
 }
 
 .messages-tools .button {
@@ -302,6 +316,15 @@ input {
 
   .messages-tools input {
     min-width: 0;
+    width: 100%;
+  }
+
+  .inline-filter {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .inline-filter input {
     width: 100%;
   }
 

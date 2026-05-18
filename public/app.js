@@ -10,6 +10,8 @@ const state = {
   messageOffset: 0,
   messageTotal: 0,
   messageQuery: '',
+  messageDateFrom: '',
+  messageDateTo: '',
 };
 
 const els = {
@@ -26,6 +28,8 @@ const els = {
   folderList: document.getElementById('folderList'),
   messageList: document.getElementById('messageList'),
   messageSearch: document.getElementById('messageSearch'),
+  messageDateFrom: document.getElementById('messageDateFrom'),
+  messageDateTo: document.getElementById('messageDateTo'),
   messageSearchBtn: document.getElementById('messageSearchBtn'),
   messagePrevBtn: document.getElementById('messagePrevBtn'),
   messageNextBtn: document.getElementById('messageNextBtn'),
@@ -71,11 +75,23 @@ function resetMessageView(emptyText) {
   state.messageOffset = 0;
   state.messageTotal = 0;
   state.messageQuery = '';
+  state.messageDateFrom = '';
+  state.messageDateTo = '';
   els.messageSearch.value = '';
+  els.messageDateFrom.value = '';
+  els.messageDateTo.value = '';
   clearList(els.messageList, emptyText);
   els.messagePageInfo.textContent = emptyText;
   els.messagePrevBtn.disabled = true;
   els.messageNextBtn.disabled = true;
+}
+
+function formatMessageDate(sentAt, receivedAt) {
+  const v = sentAt || receivedAt;
+  if (!v) return 'unknown date';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  return d.toLocaleDateString();
 }
 
 function updateMessagePager(rowsCount) {
@@ -85,8 +101,11 @@ function updateMessagePager(rowsCount) {
   const showingStart = total ? state.messageOffset + 1 : 0;
   const showingEnd = Math.min(state.messageOffset + rowsCount, total);
   const suffix = state.messageQuery ? ` | filter: "${state.messageQuery}"` : '';
+  const dateSuffix = (state.messageDateFrom || state.messageDateTo)
+    ? ` | date: ${state.messageDateFrom || '..'} to ${state.messageDateTo || '..'}`
+    : '';
 
-  els.messagePageInfo.textContent = `Showing ${showingStart}-${showingEnd} of ${total} | page ${page}/${totalPages}${suffix}`;
+  els.messagePageInfo.textContent = `Showing ${showingStart}-${showingEnd} of ${total} | page ${page}/${totalPages}${suffix}${dateSuffix}`;
   els.messagePrevBtn.disabled = state.messageOffset <= 0;
   els.messageNextBtn.disabled = (state.messageOffset + rowsCount) >= total;
 }
@@ -159,7 +178,11 @@ async function loadFolders(domainId, accountId) {
       state.folderId = folder.id;
       state.messageOffset = 0;
       state.messageQuery = '';
+      state.messageDateFrom = '';
+      state.messageDateTo = '';
       els.messageSearch.value = '';
+      els.messageDateFrom.value = '';
+      els.messageDateTo.value = '';
       await loadMessages(folder.id);
     }
   );
@@ -173,12 +196,18 @@ async function loadMessages(folderId) {
   if (state.messageQuery) {
     params.set('q', state.messageQuery);
   }
+  if (state.messageDateFrom) {
+    params.set('fromDate', state.messageDateFrom);
+  }
+  if (state.messageDateTo) {
+    params.set('toDate', state.messageDateTo);
+  }
   const data = await api(`/messages/folders/${folderId}/messages?${params.toString()}`);
   state.messageTotal = Number(data.total || 0);
   renderButtonList(
     els.messageList,
     data.messages || [],
-    (m) => `${m.subject || '(no subject)'} - ${m.from_email || 'unknown'}`,
+    (m) => `${formatMessageDate(m.sent_at, m.received_at)} | ${m.subject || '(no subject)'} - ${m.from_email || 'unknown'}`,
     async (message) => {
       await loadMessage(message.id);
     }
@@ -387,6 +416,8 @@ els.toggleEmail.addEventListener('click', () => {
 els.messageSearchBtn.addEventListener('click', async () => {
   if (!state.folderId) return;
   state.messageQuery = els.messageSearch.value.trim();
+  state.messageDateFrom = els.messageDateFrom.value;
+  state.messageDateTo = els.messageDateTo.value;
   state.messageOffset = 0;
   await loadMessages(state.folderId);
 });
@@ -396,6 +427,8 @@ els.messageSearch.addEventListener('keydown', async (event) => {
   event.preventDefault();
   if (!state.folderId) return;
   state.messageQuery = els.messageSearch.value.trim();
+  state.messageDateFrom = els.messageDateFrom.value;
+  state.messageDateTo = els.messageDateTo.value;
   state.messageOffset = 0;
   await loadMessages(state.folderId);
 });
