@@ -210,15 +210,16 @@ function renderEmailView(m) {
   wrap.appendChild(header);
   wrap.appendChild(divider);
 
+  const htmlBody = (m.body_html || '').trim();
   const bodyText = m.body_text || m.preview_text || '';
 
-  if (looksLikeHtml(bodyText)) {
+  if (htmlBody || looksLikeHtml(bodyText)) {
     // Render HTML in a sandboxed iframe — JS, forms and navigation are all blocked.
     // allow-same-origin lets us read scrollHeight for auto-resize after load.
     const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', 'allow-same-origin');
     iframe.className = 'email-iframe';
-    iframe.srcdoc = bodyText;
+    iframe.srcdoc = htmlBody || bodyText;
     iframe.addEventListener('load', () => {
       try {
         const h = iframe.contentDocument.documentElement.scrollHeight;
