@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Archive Portal</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Email Archive Portal</h1>
+          <p class="sub">Read-only archive browsing</p>
+        </div>
+        <div class="user-controls">
+          <span id="currentUser" class="muted"></span>
+          <button id="logoutBtn" class="button ghost hidden" type="button">Log out</button>
+        </div>
+      </header>
+
+      <section id="loginCard" class="card">
+        <h2>Sign in</h2>
+        <form id="loginForm" class="form" autocomplete="off">
+          <label>
+            Email
+            <input id="email" name="email" type="email" required />
+          </label>
+          <label>
+            Password
+            <input id="password" name="password" type="password" required />
+          </label>
+          <button class="button" type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section id="portal" class="portal hidden">
+        <aside class="panel">
+          <h3>Domains</h3>
+          <ul id="domainList" class="list"></ul>
+        </aside>
+
+        <aside class="panel">
+          <h3>Accounts</h3>
+          <ul id="accountList" class="list"></ul>
+        </aside>
+
+        <aside class="panel">
+          <h3>Folders</h3>
+          <ul id="folderList" class="list"></ul>
+        </aside>
+
+        <section class="panel wide">
+          <h3>Messages</h3>
+          <ul id="messageList" class="list"></ul>
+        </section>
+
+        <section class="panel wide">
+          <h3>Message Detail</h3>
+          <article id="messageDetail" class="detail muted">Select a message to view details.</article>
+        </section>
+      </section>
+
+      <p id="status" class="status"></p>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

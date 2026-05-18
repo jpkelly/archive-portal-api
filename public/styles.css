@@ -1,0 +1,166 @@
+:root {
+  --bg: #f4f6f8;
+  --panel: #ffffff;
+  --text: #1e2530;
+  --muted: #6b7687;
+  --border: #d8dee6;
+  --accent: #0e6ba8;
+  --accent-ink: #ffffff;
+  --hover: #eff6fc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  color: var(--text);
+  background: radial-gradient(circle at top right, #d9edf8, transparent 40%), var(--bg);
+}
+
+.shell {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.sub {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.card,
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.card {
+  padding: 20px;
+  margin-top: 18px;
+  max-width: 440px;
+}
+
+.form {
+  display: grid;
+  gap: 10px;
+}
+
+.form label {
+  display: grid;
+  gap: 5px;
+  font-size: 0.95rem;
+}
+
+input {
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.button {
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button.ghost {
+  background: #e8eef5;
+  color: #2a3a4e;
+}
+
+.portal {
+  margin-top: 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.panel {
+  padding: 12px;
+  min-height: 220px;
+}
+
+.panel h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.panel.wide {
+  grid-column: span 3;
+}
+
+.list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.list button {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.list button:hover {
+  background: var(--hover);
+}
+
+.detail {
+  white-space: pre-wrap;
+  font-family: Consolas, "Courier New", monospace;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.status {
+  margin-top: 10px;
+  min-height: 20px;
+  color: #9c2e2e;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 1000px) {
+  .portal {
+    grid-template-columns: 1fr;
+  }
+
+  .panel.wide {
+    grid-column: span 1;
+  }
+}
