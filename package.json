@@ -9,7 +9,7 @@
     "dev": "NODE_ENV=development node src/server.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=16"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
