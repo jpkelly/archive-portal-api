@@ -170,6 +170,26 @@ function looksLikeHtml(text) {
   return /^<!doctype\s+html/i.test(t) || /^<html[\s>]/i.test(t) || (/<\/?(body|table|td|div|p|br|span|font|img|a)\b/i.test(t));
 }
 
+function normalizeEmailHtml(html) {
+  if (!html) return '';
+  let out = html;
+
+  // about:srcdoc cannot resolve scheme-relative URLs correctly, force https.
+  out = out.replace(/\b(src|href)=(["'])\/\//gi, '$1=$2https://');
+
+  // Some senders block image hotlinking when Referer is present.
+  out = out.replace(/<img\b/gi, '<img referrerpolicy="no-referrer" loading="eager"');
+
+  // Keep email content readable inside the panel and prevent horizontal overflow.
+  if (/<head[\s>]/i.test(out)) {
+    out = out.replace(/<head([^>]*)>/i, '<head$1><style>img{max-width:100%;height:auto;}table{max-width:100%;}body{overflow-wrap:anywhere;}</style>');
+  } else {
+    out = '<style>img{max-width:100%;height:auto;}table{max-width:100%;}body{overflow-wrap:anywhere;}</style>' + out;
+  }
+
+  return out;
+}
+
 function renderEmailView(m) {
   const toStr = parseJsonList(m.to_list);
   const ccStr = parseJsonList(m.cc_list);
@@ -219,7 +239,7 @@ function renderEmailView(m) {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('sandbox', 'allow-same-origin');
     iframe.className = 'email-iframe';
-    iframe.srcdoc = htmlBody || bodyText;
+    iframe.srcdoc = normalizeEmailHtml(htmlBody || bodyText);
     iframe.addEventListener('load', () => {
       try {
         const h = iframe.contentDocument.documentElement.scrollHeight;
