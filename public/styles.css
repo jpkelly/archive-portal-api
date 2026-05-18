@@ -137,8 +137,100 @@ input {
 .detail {
   white-space: pre-wrap;
   font-family: Consolas, "Courier New", monospace;
-  max-height: 320px;
+  font-size: 0.85rem;
+  max-height: 420px;
   overflow: auto;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.detail-header h3 {
+  margin: 0;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.toggle-btn {
+  background: var(--panel);
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.78rem;
+  padding: 4px 12px;
+  transition: background 0.15s;
+}
+
+.toggle-btn:hover {
+  background: var(--hover);
+}
+
+.toggle-btn.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ── Email client view ── */
+.email-view {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 0.9rem;
+}
+
+.email-header {
+  padding: 14px 16px 10px;
+  background: #f8f9fb;
+  border-bottom: 1px solid var(--border);
+}
+
+.email-header-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.email-header-label {
+  min-width: 56px;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-top: 1px;
+}
+
+.email-header-value {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.email-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+
+.email-body {
+  padding: 16px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  color: var(--text);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.92rem;
 }
 
 .muted {

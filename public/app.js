@@ -4,6 +4,8 @@ const state = {
   domainId: null,
   accountId: null,
   folderId: null,
+  currentMessage: null,
+  viewMode: 'plain',
 };
 
 const els = {
@@ -20,6 +22,10 @@ const els = {
   folderList: document.getElementById('folderList'),
   messageList: document.getElementById('messageList'),
   messageDetail: document.getElementById('messageDetail'),
+  messageDetailEmail: document.getElementById('messageDetailEmail'),
+  viewToggle: document.getElementById('viewToggle'),
+  togglePlain: document.getElementById('togglePlain'),
+  toggleEmail: document.getElementById('toggleEmail'),
 };
 
 function setStatus(message) {
@@ -135,18 +141,90 @@ async function loadMessages(folderId) {
   );
 }
 
-async function loadMessage(messageId) {
-  const data = await api(`/messages/${messageId}`);
-  const m = data.message;
+function parseJsonList(val) {
+  if (!val) return '';
+  try {
+    const arr = JSON.parse(val);
+    return Array.isArray(arr) ? arr.join(', ') : String(arr);
+  } catch (_) {
+    return String(val);
+  }
+}
+
+function renderPlainView(m) {
+  els.messageDetail.classList.remove('muted');
   els.messageDetail.textContent = [
     `Subject: ${m.subject || ''}`,
-    `From: ${m.from_name || ''} <${m.from_email || ''}>`,
-    `To: ${m.to_list || ''}`,
-    `CC: ${m.cc_list || ''}`,
+    `From: ${m.from_name ? m.from_name + ' <' + m.from_email + '>' : (m.from_email || '')}`,
+    `To: ${parseJsonList(m.to_list)}`,
+    `CC: ${parseJsonList(m.cc_list)}`,
     `Sent: ${m.sent_at || ''}`,
     '',
     m.body_text || m.preview_text || '(no body available)',
   ].join('\n');
+}
+
+function renderEmailView(m) {
+  const toStr = parseJsonList(m.to_list);
+  const ccStr = parseJsonList(m.cc_list);
+  const fromStr = m.from_name ? `${m.from_name} \u003c${m.from_email}\u003e` : (m.from_email || '');
+
+  const wrap = els.messageDetailEmail;
+  wrap.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'email-header';
+
+  const rows = [
+    ['Subject', m.subject || '(no subject)'],
+    ['From', fromStr],
+    ['To', toStr],
+    ...(ccStr ? [['CC', ccStr]] : []),
+    ['Date', m.sent_at || ''],
+  ];
+
+  rows.forEach(([label, value]) => {
+    const row = document.createElement('div');
+    row.className = 'email-header-row';
+    const labelEl = document.createElement('span');
+    labelEl.className = 'email-header-label';
+    labelEl.textContent = label;
+    const valueEl = document.createElement('span');
+    valueEl.className = 'email-header-value';
+    valueEl.textContent = value;
+    row.appendChild(labelEl);
+    row.appendChild(valueEl);
+    header.appendChild(row);
+  });
+
+  const divider = document.createElement('hr');
+  divider.className = 'email-divider';
+
+  const body = document.createElement('div');
+  body.className = 'email-body';
+  body.textContent = m.body_text || m.preview_text || '(no body available)';
+
+  wrap.appendChild(header);
+  wrap.appendChild(divider);
+  wrap.appendChild(body);
+}
+
+function applyViewMode() {
+  const isPlain = state.viewMode === 'plain';
+  els.messageDetail.classList.toggle('hidden', !isPlain);
+  els.messageDetailEmail.classList.toggle('hidden', isPlain);
+  els.togglePlain.classList.toggle('active', isPlain);
+  els.toggleEmail.classList.toggle('active', !isPlain);
+}
+
+async function loadMessage(messageId) {
+  const data = await api(`/messages/${messageId}`);
+  const m = data.message;
+  state.currentMessage = m;
+  els.viewToggle.classList.remove('hidden');
+  renderPlainView(m);
+  renderEmailView(m);
+  applyViewMode();
 }
 
 async function bootstrapFromToken() {
@@ -205,6 +283,16 @@ els.loginForm.addEventListener('submit', async (event) => {
   }
 });
 
+els.togglePlain.addEventListener('click', () => {
+  state.viewMode = 'plain';
+  applyViewMode();
+});
+
+els.toggleEmail.addEventListener('click', () => {
+  state.viewMode = 'email';
+  applyViewMode();
+});
+
 els.logoutBtn.addEventListener('click', () => {
   localStorage.removeItem('archivePortalToken');
   state.token = '';
@@ -212,12 +300,17 @@ els.logoutBtn.addEventListener('click', () => {
   state.domainId = null;
   state.accountId = null;
   state.folderId = null;
+  state.currentMessage = null;
   renderAuthState();
   clearList(els.domainList, 'Log in to load domains.');
   clearList(els.accountList, 'Select a domain first.');
   clearList(els.folderList, 'Select an account first.');
   clearList(els.messageList, 'Select a folder first.');
   els.messageDetail.textContent = 'Select a message to view details.';
+  els.messageDetail.classList.remove('hidden');
+  els.messageDetailEmail.innerHTML = '';
+  els.messageDetailEmail.classList.add('hidden');
+  els.viewToggle.classList.add('hidden');
 });
 
 bootstrapFromToken();

@@ -56,8 +56,15 @@
         </section>
 
         <section class="panel wide">
-          <h3>Message Detail</h3>
+          <div class="detail-header">
+            <h3>Message Detail</h3>
+            <div id="viewToggle" class="view-toggle hidden">
+              <button id="togglePlain" class="toggle-btn active" type="button">Plain Text</button>
+              <button id="toggleEmail" class="toggle-btn" type="button">Email View</button>
+            </div>
+          </div>
           <article id="messageDetail" class="detail muted">Select a message to view details.</article>
+          <div id="messageDetailEmail" class="email-view hidden"></div>
         </section>
       </section>
 
