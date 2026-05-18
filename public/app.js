@@ -31,6 +31,7 @@ const els = {
   messageDateFrom: document.getElementById('messageDateFrom'),
   messageDateTo: document.getElementById('messageDateTo'),
   messageSearchBtn: document.getElementById('messageSearchBtn'),
+  messageResetBtn: document.getElementById('messageResetBtn'),
   messagePrevBtn: document.getElementById('messagePrevBtn'),
   messageNextBtn: document.getElementById('messageNextBtn'),
   messagePageInfo: document.getElementById('messagePageInfo'),
@@ -430,6 +431,18 @@ els.messageSearch.addEventListener('keydown', async (event) => {
   state.messageDateFrom = els.messageDateFrom.value;
   state.messageDateTo = els.messageDateTo.value;
   state.messageOffset = 0;
+  await loadMessages(state.folderId);
+});
+
+els.messageResetBtn.addEventListener('click', async () => {
+  if (!state.folderId) return;
+  state.messageQuery = '';
+  state.messageDateFrom = '';
+  state.messageDateTo = '';
+  state.messageOffset = 0;
+  els.messageSearch.value = '';
+  els.messageDateFrom.value = '';
+  els.messageDateTo.value = '';
   await loadMessages(state.folderId);
 });
 
