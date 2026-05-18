@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const fs = require('fs/promises');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { query } = require('../db');
@@ -12,6 +12,21 @@ const router = express.Router();
 
 function userTempArchiveDir(userId) {
   return path.join(os.tmpdir(), 'archive-portal-cache', userId);
+}
+
+async function removeDirRecursive(dir) {
+  if (typeof fs.promises.rm === 'function') {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    return;
+  }
+
+  try {
+    await fs.promises.rmdir(dir, { recursive: true });
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw err;
+    }
+  }
 }
 
 router.post('/login', async (req, res) => {
@@ -82,7 +97,7 @@ router.get('/me', requireAuth, async (req, res) => {
 router.post('/logout', requireAuth, async (req, res) => {
   try {
     const dir = userTempArchiveDir(req.auth.sub);
-    await fs.rm(dir, { recursive: true, force: true });
+    await removeDirRecursive(dir);
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'Could not complete logout cleanup', detail: err.message });
