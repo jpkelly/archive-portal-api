@@ -106,6 +106,39 @@ input {
   margin-bottom: 10px;
 }
 
+.messages-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.messages-header h3 {
+  margin: 0;
+}
+
+.messages-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.messages-tools input {
+  min-width: 230px;
+  padding: 7px 10px;
+}
+
+.messages-tools .button {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+}
+
+.page-info {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
 .panel.wide {
   grid-column: span 3;
 }
@@ -256,6 +289,20 @@ input {
 @media (max-width: 1000px) {
   .portal {
     grid-template-columns: 1fr;
+  }
+
+  .messages-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .messages-tools {
+    flex-wrap: wrap;
+  }
+
+  .messages-tools input {
+    min-width: 0;
+    width: 100%;
   }
 
   .panel.wide {

@@ -6,6 +6,10 @@ const state = {
   folderId: null,
   currentMessage: null,
   viewMode: 'plain',
+  messageLimit: 100,
+  messageOffset: 0,
+  messageTotal: 0,
+  messageQuery: '',
 };
 
 const els = {
@@ -21,6 +25,11 @@ const els = {
   accountList: document.getElementById('accountList'),
   folderList: document.getElementById('folderList'),
   messageList: document.getElementById('messageList'),
+  messageSearch: document.getElementById('messageSearch'),
+  messageSearchBtn: document.getElementById('messageSearchBtn'),
+  messagePrevBtn: document.getElementById('messagePrevBtn'),
+  messageNextBtn: document.getElementById('messageNextBtn'),
+  messagePageInfo: document.getElementById('messagePageInfo'),
   messageDetail: document.getElementById('messageDetail'),
   messageDetailEmail: document.getElementById('messageDetailEmail'),
   viewToggle: document.getElementById('viewToggle'),
@@ -58,6 +67,30 @@ function renderButtonList(listEl, rows, labelFn, onClick) {
   });
 }
 
+function resetMessageView(emptyText) {
+  state.messageOffset = 0;
+  state.messageTotal = 0;
+  state.messageQuery = '';
+  els.messageSearch.value = '';
+  clearList(els.messageList, emptyText);
+  els.messagePageInfo.textContent = emptyText;
+  els.messagePrevBtn.disabled = true;
+  els.messageNextBtn.disabled = true;
+}
+
+function updateMessagePager(rowsCount) {
+  const total = state.messageTotal;
+  const page = Math.floor(state.messageOffset / state.messageLimit) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / state.messageLimit));
+  const showingStart = total ? state.messageOffset + 1 : 0;
+  const showingEnd = Math.min(state.messageOffset + rowsCount, total);
+  const suffix = state.messageQuery ? ` | filter: "${state.messageQuery}"` : '';
+
+  els.messagePageInfo.textContent = `Showing ${showingStart}-${showingEnd} of ${total} | page ${page}/${totalPages}${suffix}`;
+  els.messagePrevBtn.disabled = state.messageOffset <= 0;
+  els.messageNextBtn.disabled = (state.messageOffset + rowsCount) >= total;
+}
+
 async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (state.token) {
@@ -93,7 +126,7 @@ async function loadDomains() {
       state.accountId = null;
       state.folderId = null;
       clearList(els.folderList, 'Select an account first.');
-      clearList(els.messageList, 'Select a folder first.');
+      resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
       await loadAccounts(domain.id);
     }
@@ -109,7 +142,7 @@ async function loadAccounts(domainId) {
     async (account) => {
       state.accountId = account.id;
       state.folderId = null;
-      clearList(els.messageList, 'Select a folder first.');
+      resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
       await loadFolders(state.domainId, account.id);
     }
@@ -124,13 +157,24 @@ async function loadFolders(domainId, accountId) {
     (f) => `${f.path} (${f.message_count || 0})`,
     async (folder) => {
       state.folderId = folder.id;
+      state.messageOffset = 0;
+      state.messageQuery = '';
+      els.messageSearch.value = '';
       await loadMessages(folder.id);
     }
   );
 }
 
 async function loadMessages(folderId) {
-  const data = await api(`/messages/folders/${folderId}/messages?limit=50&offset=0`);
+  const params = new URLSearchParams({
+    limit: String(state.messageLimit),
+    offset: String(state.messageOffset),
+  });
+  if (state.messageQuery) {
+    params.set('q', state.messageQuery);
+  }
+  const data = await api(`/messages/folders/${folderId}/messages?${params.toString()}`);
+  state.messageTotal = Number(data.total || 0);
   renderButtonList(
     els.messageList,
     data.messages || [],
@@ -139,6 +183,7 @@ async function loadMessages(folderId) {
       await loadMessage(message.id);
     }
   );
+  updateMessagePager((data.messages || []).length);
 }
 
 function parseJsonList(val) {
@@ -279,7 +324,7 @@ async function bootstrapFromToken() {
     clearList(els.domainList, 'Log in to load domains.');
     clearList(els.accountList, 'Select a domain first.');
     clearList(els.folderList, 'Select an account first.');
-    clearList(els.messageList, 'Select a folder first.');
+    resetMessageView('Select a folder first.');
     return;
   }
 
@@ -290,7 +335,7 @@ async function bootstrapFromToken() {
     await loadDomains();
     clearList(els.accountList, 'Select a domain first.');
     clearList(els.folderList, 'Select an account first.');
-    clearList(els.messageList, 'Select a folder first.');
+    resetMessageView('Select a folder first.');
   } catch (err) {
     localStorage.removeItem('archivePortalToken');
     state.token = '';
@@ -322,7 +367,7 @@ els.loginForm.addEventListener('submit', async (event) => {
     await loadDomains();
     clearList(els.accountList, 'Select a domain first.');
     clearList(els.folderList, 'Select an account first.');
-    clearList(els.messageList, 'Select a folder first.');
+    resetMessageView('Select a folder first.');
     els.password.value = '';
   } catch (err) {
     setStatus(err.message);
@@ -339,6 +384,37 @@ els.toggleEmail.addEventListener('click', () => {
   applyViewMode();
 });
 
+els.messageSearchBtn.addEventListener('click', async () => {
+  if (!state.folderId) return;
+  state.messageQuery = els.messageSearch.value.trim();
+  state.messageOffset = 0;
+  await loadMessages(state.folderId);
+});
+
+els.messageSearch.addEventListener('keydown', async (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  if (!state.folderId) return;
+  state.messageQuery = els.messageSearch.value.trim();
+  state.messageOffset = 0;
+  await loadMessages(state.folderId);
+});
+
+els.messagePrevBtn.addEventListener('click', async () => {
+  if (!state.folderId) return;
+  if (state.messageOffset <= 0) return;
+  state.messageOffset = Math.max(0, state.messageOffset - state.messageLimit);
+  await loadMessages(state.folderId);
+});
+
+els.messageNextBtn.addEventListener('click', async () => {
+  if (!state.folderId) return;
+  const nextOffset = state.messageOffset + state.messageLimit;
+  if (nextOffset >= state.messageTotal) return;
+  state.messageOffset = nextOffset;
+  await loadMessages(state.folderId);
+});
+
 els.logoutBtn.addEventListener('click', () => {
   localStorage.removeItem('archivePortalToken');
   state.token = '';
@@ -351,7 +427,7 @@ els.logoutBtn.addEventListener('click', () => {
   clearList(els.domainList, 'Log in to load domains.');
   clearList(els.accountList, 'Select a domain first.');
   clearList(els.folderList, 'Select an account first.');
-  clearList(els.messageList, 'Select a folder first.');
+  resetMessageView('Select a folder first.');
   els.messageDetail.textContent = 'Select a message to view details.';
   els.messageDetail.classList.remove('hidden');
   els.messageDetailEmail.innerHTML = '';

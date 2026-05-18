@@ -51,7 +51,16 @@
         </aside>
 
         <section class="panel wide">
-          <h3>Messages</h3>
+          <div class="messages-header">
+            <h3>Messages</h3>
+            <div class="messages-tools">
+              <input id="messageSearch" type="text" placeholder="Filter subject or sender..." />
+              <button id="messageSearchBtn" class="button ghost" type="button">Search</button>
+              <button id="messagePrevBtn" class="button ghost" type="button">Prev</button>
+              <button id="messageNextBtn" class="button ghost" type="button">Next</button>
+            </div>
+          </div>
+          <p id="messagePageInfo" class="muted page-info">No folder selected.</p>
           <ul id="messageList" class="list"></ul>
         </section>
 
