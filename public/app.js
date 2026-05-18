@@ -164,6 +164,12 @@ function renderPlainView(m) {
   ].join('\n');
 }
 
+function looksLikeHtml(text) {
+  if (!text) return false;
+  const t = text.trimStart();
+  return /^<!doctype\s+html/i.test(t) || /^<html[\s>]/i.test(t) || (/<\/?(body|table|td|div|p|br|span|font|img|a)\b/i.test(t));
+}
+
 function renderEmailView(m) {
   const toStr = parseJsonList(m.to_list);
   const ccStr = parseJsonList(m.cc_list);
@@ -172,6 +178,7 @@ function renderEmailView(m) {
   const wrap = els.messageDetailEmail;
   wrap.innerHTML = '';
 
+  // Header block (always plain text — safe DOM construction)
   const header = document.createElement('div');
   header.className = 'email-header';
 
@@ -200,13 +207,31 @@ function renderEmailView(m) {
   const divider = document.createElement('hr');
   divider.className = 'email-divider';
 
-  const body = document.createElement('div');
-  body.className = 'email-body';
-  body.textContent = m.body_text || m.preview_text || '(no body available)';
-
   wrap.appendChild(header);
   wrap.appendChild(divider);
-  wrap.appendChild(body);
+
+  const bodyText = m.body_text || m.preview_text || '';
+
+  if (looksLikeHtml(bodyText)) {
+    // Render HTML in a sandboxed iframe — JS, forms and navigation are all blocked.
+    // allow-same-origin lets us read scrollHeight for auto-resize after load.
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox', 'allow-same-origin');
+    iframe.className = 'email-iframe';
+    iframe.srcdoc = bodyText;
+    iframe.addEventListener('load', () => {
+      try {
+        const h = iframe.contentDocument.documentElement.scrollHeight;
+        if (h > 80) iframe.style.height = h + 'px';
+      } catch (_) {}
+    });
+    wrap.appendChild(iframe);
+  } else {
+    const body = document.createElement('div');
+    body.className = 'email-body';
+    body.textContent = bodyText || '(no body available)';
+    wrap.appendChild(body);
+  }
 }
 
 function applyViewMode() {

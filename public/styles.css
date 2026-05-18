@@ -182,7 +182,6 @@ input {
 
 /* ── Email client view ── */
 .email-view {
-  max-height: 420px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -231,6 +230,13 @@ input {
   color: var(--text);
   font-family: Georgia, "Times New Roman", serif;
   font-size: 0.92rem;
+}
+
+.email-iframe {
+  display: block;
+  width: 100%;
+  min-height: 200px;
+  border: none;
 }
 
 .muted {
