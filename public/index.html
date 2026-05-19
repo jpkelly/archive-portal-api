@@ -107,10 +107,10 @@
           <div class="admin-grid">
             <label>
               Domain
-              <select id="adminDomainSelect"></select>
+              <select id="adminDomainSelect" title="Select the domain to administer"></select>
             </label>
 
-            <label>
+            <label title="active: normal access &#10;archived: read-only, no new mail &#10;restricted: access blocked for all members">
               Status
               <select id="adminDomainStatus">
                 <option value="active">active</option>
@@ -120,19 +120,19 @@
             </label>
 
             <div class="admin-actions">
-              <button id="adminSaveDomainBtn" class="button" type="button">Save Domain</button>
+              <button id="adminSaveDomainBtn" class="button" type="button" title="Save the domain status change">Save Domain</button>
             </div>
 
             <div class="admin-actions">
-              <button id="adminSyncAccountsBtn" class="button ghost" type="button">Refresh Accounts</button>
+              <button id="adminSyncAccountsBtn" class="button ghost" type="button" title="Re-sync the account list from Plesk. Use this after adding or removing mailboxes.">Refresh Accounts</button>
             </div>
 
-            <label>
+            <label title="Email address of the user to grant access to this domain's archive">
               Add Member Email
               <input id="adminMemberEmail" type="email" placeholder="user@example.com" />
             </label>
 
-            <label>
+            <label title="read: view messages only &#10;admin: full access including archive management">
               Permission
               <select id="adminMemberPermission">
                 <option value="read">read</option>
@@ -141,7 +141,7 @@
             </label>
 
             <div class="admin-actions">
-              <button id="adminAddMemberBtn" class="button" type="button">Add Access</button>
+              <button id="adminAddMemberBtn" class="button" type="button" title="Grant this user access to the selected domain's archive">Add Access</button>
             </div>
           </div>
 
@@ -156,7 +156,7 @@
           <ul id="adminAccountSyncStatus" class="list admin-member-list"></ul>
 
           <div class="admin-actions" style="margin-top: 10px;">
-            <button id="adminQueueSyncBtn" class="button ghost" type="button">Queue Sync for Unindexed</button>
+            <button id="adminQueueSyncBtn" class="button ghost" type="button" title="Trigger background ingestion for accounts not yet indexed. Messages appear after processing completes.">Queue Sync for Unindexed</button>
           </div>
 
           <h4 class="admin-subhead">Archive Lifecycle Management</h4>
@@ -167,15 +167,15 @@
           <div class="archive-account-header">
             <span class="archive-account-header-label">Accounts</span>
             <div class="archive-account-header-btns">
-              <button id="adminArchiveSelectAll" class="button ghost" type="button">Select All</button>
-              <button id="adminArchiveSelectNone" class="button ghost" type="button">Select None</button>
+              <button id="adminArchiveSelectAll" class="button ghost" type="button" title="Select all accounts for the current operation">Select All</button>
+              <button id="adminArchiveSelectNone" class="button ghost" type="button" title="Deselect all accounts">Select None</button>
             </div>
           </div>
           <div id="adminArchiveSummary" class="archive-summary"></div>
           <div id="adminArchiveAccountList" class="archive-account-list"></div>
 
           <div class="admin-grid admin-archive-grid" style="margin-top: 12px;">
-            <label>
+            <label title="Before Date: archive everything before a cutoff &#10;Date Range: archive messages within a specific window">
               Archive Mode
               <select id="adminArchiveMode">
                 <option value="before">Before Date</option>
@@ -183,30 +183,30 @@
               </select>
             </label>
 
-            <label id="adminArchiveBeforeWrap">
+            <label id="adminArchiveBeforeWrap" title="Archive all messages received before this date">
               Before Date
               <input id="adminArchiveBeforeDate" type="date" />
             </label>
 
-            <label id="adminArchiveFromWrap" class="hidden">
+            <label id="adminArchiveFromWrap" class="hidden" title="Start of the date range to archive (inclusive)">
               From Date
               <input id="adminArchiveFromDate" type="date" />
             </label>
 
-            <label id="adminArchiveToWrap" class="hidden">
+            <label id="adminArchiveToWrap" class="hidden" title="End of the date range to archive (inclusive)">
               To Date
               <input id="adminArchiveToDate" type="date" />
             </label>
           </div>
 
           <div class="archive-actions-row">
-            <button id="adminArchiveStartBtn" class="button" type="button">Create Archive</button>
-            <button id="adminArchiveVerifyBtn" class="button ghost" type="button">Verify Archive</button>
-            <button id="adminDeleteMessagesBtn" class="button ghost" type="button">Delete Messages (Verified Only)</button>
-            <button id="adminArchiveDiscoverBtn" class="button ghost" type="button">Scan This Domain</button>
+            <button id="adminArchiveStartBtn" class="button" type="button" title="Create a compressed archive (.tar.gz) of selected accounts' mail and upload to S3. Step 1 of 3.">Create Archive</button>
+            <button id="adminArchiveVerifyBtn" class="button ghost" type="button" title="Confirm the S3 archive file exists and is readable. Must pass before messages can be deleted. Step 2 of 3.">Verify Archive</button>
+            <button id="adminDeleteMessagesBtn" class="button ghost" type="button" title="Permanently delete mail from the server for selected accounts. Only allowed after archive is verified. This cannot be undone. Step 3 of 3.">Delete Messages (Verified Only)</button>
+            <button id="adminArchiveDiscoverBtn" class="button ghost" type="button" title="Scan S3 for existing archive files for the selected domain and register them in the database. Skips accounts that already have a record.">Scan This Domain</button>
           </div>
           <div class="archive-actions-row archive-actions-bulk">
-            <button id="adminArchiveDiscoverAllBtn" class="button ghost" type="button">Scan All Domains</button>
+            <button id="adminArchiveDiscoverAllBtn" class="button ghost" type="button" title="Scan S3 for existing archive files across every domain and register them in the database. Skips accounts that already have a record.">Scan All Domains</button>
           </div>
           <div id="adminArchiveStatus" class="admin-archive-status muted">No accounts selected.</div>
         </section>
