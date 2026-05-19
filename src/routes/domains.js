@@ -977,13 +977,29 @@ router.post('/:domainId/archive/discover', async (req, res) => {
         continue;
       }
 
-      const usernameLocal = String(account.username || '').split('@')[0];
-      let s3Uri = null;
+      const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
+      const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${account.domain_name}/${usernameLocal}/`;
+      let s3Stdout = '';
       try {
-        s3Uri = await findAccountArchivePath(account.domain_name, usernameLocal);
-      } catch (_) {
-        // S3 error for this account — skip
+        const s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
+        s3Stdout = s3Result.stdout || '';
+      } catch (s3Err) {
+        const stderr = String((s3Err && s3Err.stderr) || '').trim();
+        if (stderr) {
+          console.error(`[discover] S3 error for ${account.username}:`, stderr);
+        }
+        results.push({ username: account.username, status: 'not_found' });
+        continue;
       }
+
+      const tarball = s3Stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => line.split(/\s+/).pop())
+        .find((name) => name.endsWith('.tar.gz'));
+
+      const s3Uri = tarball ? `${prefix}${tarball}` : null;
 
       if (!s3Uri) {
         results.push({ username: account.username, status: 'not_found' });
