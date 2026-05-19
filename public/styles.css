@@ -332,22 +332,79 @@ input {
   overflow-y: auto;
 }
 
+.archive-summary {
+  font-size: 0.82rem;
+  color: var(--muted);
+  padding: 4px 0 8px 0;
+  min-height: 1.2em;
+}
+
+.archive-account-item {
+  border-bottom: 1px solid var(--border);
+}
+
+.archive-account-item:last-child {
+  border-bottom: none;
+}
+
 .archive-account-row {
   display: grid;
-  grid-template-columns: 20px 1fr auto auto auto;
+  grid-template-columns: 20px 1fr auto auto auto auto auto;
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
   font-size: 0.85rem;
-}
-
-.archive-account-row:last-child {
-  border-bottom: none;
 }
 
 .archive-account-row:hover {
   background: var(--hover);
+}
+
+.archive-account-detail {
+  padding: 6px 10px 8px 32px;
+  font-size: 0.78rem;
+  background: var(--hover);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+}
+
+.archive-account-detail.hidden {
+  display: none;
+}
+
+.archive-s3-uri {
+  color: var(--muted);
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
+
+.archive-detail-meta {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.archive-copy-btn {
+  font-size: 0.72rem !important;
+  padding: 2px 8px !important;
+  white-space: nowrap;
+}
+
+.archive-detail-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.archive-detail-toggle:hover {
+  color: var(--text);
 }
 
 .archive-account-label {
@@ -382,8 +439,10 @@ input {
 .archive-status-badge[data-state="pending"]  { background: #fff3cd; color: #856404; }
 .archive-status-badge[data-state="running"]  { background: #cce5ff; color: #004085; }
 .archive-status-badge[data-state="complete"] { background: #d4edda; color: #155724; }
-.archive-status-badge[data-state="verified"] { background: #155724; color: #fff; }
-.archive-status-badge[data-state="error"]    { background: #f8d7da; color: #721c24; }
+.archive-status-badge[data-state="verified"]   { background: #155724; color: #fff; }
+.archive-status-badge[data-state="error"]      { background: #f8d7da; color: #721c24; }
+.archive-status-badge[data-state="deleted"]    { background: #6c757d; color: #fff; }
+.archive-status-badge[data-state="del-ready"]  { background: #d1ecf1; color: #0c5460; }
 
 .archive-actions-row {
   display: flex;

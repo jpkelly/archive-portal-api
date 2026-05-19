@@ -73,6 +73,7 @@ const els = {
   adminDeleteMessagesBtn: document.getElementById('adminDeleteMessagesBtn'),
   adminArchiveDiscoverBtn: document.getElementById('adminArchiveDiscoverBtn'),
   adminArchiveDiscoverAllBtn: document.getElementById('adminArchiveDiscoverAllBtn'),
+  adminArchiveSummary: document.getElementById('adminArchiveSummary'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
   portalTabs: document.getElementById('portalTabs'),
   tabEmailViewer: document.getElementById('tabEmailViewer'),
@@ -286,6 +287,22 @@ function renderArchiveAccountTable(accounts) {
   const container = els.adminArchiveAccountList;
   container.innerHTML = '';
 
+  // Summary line
+  if (els.adminArchiveSummary) {
+    if (!accounts || !accounts.length) {
+      els.adminArchiveSummary.textContent = '';
+    } else {
+      const total = accounts.length;
+      const archived = accounts.filter((a) => a.archive_state).length;
+      const deleted = accounts.filter((a) => a.archive_state && a.archive_state.deletion_status === 'deleted').length;
+      const pending = total - archived;
+      const parts = [`${archived} of ${total} accounts archived`];
+      if (deleted) parts.push(`${deleted} messages deleted`);
+      if (pending) parts.push(`${pending} not yet archived`);
+      els.adminArchiveSummary.textContent = parts.join('  \u00b7  ');
+    }
+  }
+
   if (!accounts || !accounts.length) {
     const empty = document.createElement('p');
     empty.className = 'muted';
@@ -299,9 +316,13 @@ function renderArchiveAccountTable(accounts) {
     const archive = account.archive_state;
     const id = String(account.id);
 
+    const item = document.createElement('div');
+    item.className = 'archive-account-item';
+
     const row = document.createElement('div');
     row.className = 'archive-account-row';
 
+    // Checkbox
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.id = `archiveAcct_${id}`;
@@ -315,15 +336,18 @@ function renderArchiveAccountTable(accounts) {
       }
     });
 
+    // Label
     const label = document.createElement('label');
     label.htmlFor = `archiveAcct_${id}`;
     label.className = 'archive-account-label';
     label.textContent = account.username;
 
+    // Message count
     const msgs = document.createElement('span');
     msgs.className = 'archive-account-msgs';
     msgs.textContent = account.message_count > 0 ? `${account.message_count} msgs` : 'empty';
 
+    // Archive status badge
     const badge = document.createElement('span');
     badge.className = 'archive-status-badge';
     if (!archive) {
@@ -346,6 +370,21 @@ function renderArchiveAccountTable(accounts) {
       badge.dataset.state = 'pending';
     }
 
+    // Deletion status badge
+    const delBadge = document.createElement('span');
+    delBadge.className = 'archive-status-badge';
+    if (archive && archive.deletion_status === 'deleted') {
+      delBadge.textContent = 'Msgs Deleted';
+      delBadge.dataset.state = 'deleted';
+    } else if (archive && archive.deletion_status === 'ready') {
+      delBadge.textContent = 'Del Ready';
+      delBadge.dataset.state = 'del-ready';
+    } else {
+      delBadge.style.visibility = 'hidden';
+      delBadge.textContent = '\u2013';
+    }
+
+    // Range
     const range = document.createElement('span');
     range.className = 'archive-account-range';
     if (archive) {
@@ -355,12 +394,63 @@ function renderArchiveAccountTable(accounts) {
       range.textContent = '\u2014';
     }
 
+    // Expand toggle
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'archive-detail-toggle';
+    toggle.setAttribute('aria-label', 'Toggle archive details');
+    if (archive) {
+      toggle.textContent = '\u25bc';
+    } else {
+      toggle.style.visibility = 'hidden';
+      toggle.textContent = '\u25bc';
+    }
+
+    // Detail panel
+    const detail = document.createElement('div');
+    detail.className = 'archive-account-detail hidden';
+    if (archive) {
+      if (archive.archive_s3_uri) {
+        const uriSpan = document.createElement('span');
+        uriSpan.className = 'archive-s3-uri';
+        uriSpan.textContent = archive.archive_s3_uri;
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'button ghost archive-copy-btn';
+        copyBtn.textContent = 'Copy URI';
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(archive.archive_s3_uri).then(() => {
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => { copyBtn.textContent = 'Copy URI'; }, 1500);
+          });
+        });
+        detail.appendChild(uriSpan);
+        detail.appendChild(copyBtn);
+      }
+      if (archive.verification_checked_at) {
+        const verSpan = document.createElement('span');
+        verSpan.className = 'archive-detail-meta';
+        verSpan.textContent = `Verified: ${archive.verification_checked_at.slice(0, 10)}`;
+        detail.appendChild(verSpan);
+      }
+    }
+
+    toggle.addEventListener('click', () => {
+      const isOpen = !detail.classList.contains('hidden');
+      detail.classList.toggle('hidden', isOpen);
+      toggle.textContent = isOpen ? '\u25bc' : '\u25b2';
+    });
+
     row.appendChild(checkbox);
     row.appendChild(label);
     row.appendChild(msgs);
     row.appendChild(badge);
+    row.appendChild(delBadge);
     row.appendChild(range);
-    container.appendChild(row);
+    row.appendChild(toggle);
+    item.appendChild(row);
+    item.appendChild(detail);
+    container.appendChild(item);
   });
 }
 
