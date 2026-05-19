@@ -264,7 +264,7 @@ router.post('/:domainId/accounts/:accountId/ingest', async (req, res) => {
   const { domainId, accountId } = req.params;
 
   try {
-    const { id: userId, role } = req.auth;
+    const { sub: userId, role } = req.auth;
     if (!await canAccessDomain(userId, domainId, role)) {
       return res.status(403).json({ error: 'Access denied' });
     }
