@@ -404,6 +404,7 @@ async function loadAccounts(domainId) {
     // Main account button
     const btn = document.createElement('button');
     btn.type = 'button';
+    btn.className = 'account-main-button';
     btn.style.flex = '1 1 auto';
     btn.style.minWidth = '0';
     btn.style.textAlign = 'left';
@@ -430,20 +431,31 @@ async function loadAccounts(domainId) {
       bgColor = '#ffe6e6';
     }
     
+    const selectedPrefix = isSelected ? '▶ ' : '';
     const label = isSyncing
-      ? `${indicator} ${account.username} – Indexing…`
+      ? `${selectedPrefix}${indicator} ${account.username} – Indexing…`
       : msgCount === 0
-        ? `${indicator} ${account.username} (empty)`
-        : `${indicator} ${account.username} (${msgCount} msgs)`;
+        ? `${selectedPrefix}${indicator} ${account.username} (empty)`
+        : `${selectedPrefix}${indicator} ${account.username} (${msgCount} msgs)`;
 
     btn.textContent = label;
     btn.style.backgroundColor = bgColor;
     btn.style.padding = '6px 10px';
     btn.style.borderRadius = '4px';
+    const isSelected = state.accountId === account.id;
+    btn.classList.toggle('selected', isSelected);
+    btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     btn.title = isIndexed ? 'Indexed' : (isSyncing ? 'Indexing in progress' : 'Not indexed');
     
     btn.addEventListener('click', async () => {
       state.accountId = account.id;
+      const selectedButtons = els.accountList.querySelectorAll('.account-main-button.selected');
+      selectedButtons.forEach((selectedBtn) => {
+        selectedBtn.classList.remove('selected');
+        selectedBtn.setAttribute('aria-pressed', 'false');
+      });
+      btn.classList.add('selected');
+      btn.setAttribute('aria-pressed', 'true');
       state.folderId = null;
       resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
