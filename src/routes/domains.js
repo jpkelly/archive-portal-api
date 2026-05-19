@@ -264,7 +264,10 @@ router.post('/:domainId/accounts/:accountId/ingest', async (req, res) => {
   const { domainId, accountId } = req.params;
 
   try {
-    if (!requireAdmin(req, res)) return;
+    const { id: userId, role } = req.auth;
+    if (!await canAccessDomain(userId, domainId, role)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     const account = await query(
       'SELECT a.username, d.name FROM mail_accounts a JOIN domains d ON d.id=a.domain_id WHERE a.id=? AND d.id=? LIMIT 1',
