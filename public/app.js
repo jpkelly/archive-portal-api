@@ -420,6 +420,7 @@ async function loadAccounts(domainId) {
     const isSyncing = syncingAccounts.has(account.id);
     
     const isIndexedWithMessages = isIndexed && msgCount > 0;
+    const isIndexedEmpty = isIndexed && msgCount === 0;
 
     let indicator = '';
     let bgColor = '';
@@ -429,11 +430,13 @@ async function loadAccounts(domainId) {
     } else if (isIndexedWithMessages) {
       indicator = '🟢';
       bgColor = '#e6f5e6';
+    } else if (isIndexedEmpty) {
+      indicator = '🔴';
+      bgColor = '#ffe6e6';
     }
     
     const isSelected = state.accountId === account.id;
     const indicatorPrefix = indicator ? `${indicator} ` : '';
-    const isIndexedEmpty = isIndexed && msgCount === 0;
     const label = isSyncing
       ? `${indicatorPrefix}${account.username} – Indexing…`
       : isIndexedEmpty
