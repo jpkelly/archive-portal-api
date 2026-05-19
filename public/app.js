@@ -289,6 +289,8 @@ async function loadDomains() {
   );
 }
 
+const syncingAccounts = new Set();
+
 async function loadAccounts(domainId) {
   const data = await api(`/domains/${domainId}/accounts`);
   const accountList = data.accounts || [];
@@ -301,30 +303,30 @@ async function loadAccounts(domainId) {
 
   accountList.forEach((account) => {
     const li = document.createElement('li');
-    li.style.marginBottom = '6px';
-    li.style.display = 'flex';
-    li.style.justifyContent = 'space-between';
-    li.style.alignItems = 'center';
-    li.style.gap = '8px';
+    li.style.cssText = 'margin-bottom:4px;display:flex;align-items:center;gap:6px;flex-wrap:nowrap;';
     
     // Main account button
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.style.flex = '1';
+    btn.style.minWidth = '0';
     btn.style.textAlign = 'left';
+    btn.style.overflow = 'hidden';
+    btn.style.textOverflow = 'ellipsis';
+    btn.style.whiteSpace = 'nowrap';
     
     const msgCount = account.message_count || 0;
     const isIndexed = account.sync_status === 'indexed';
-    const hasMessages = msgCount > 0;
+
+    // Clear syncing state once the server confirms it is indexed
+    if (isIndexed) syncingAccounts.delete(account.id);
+    const isSyncing = syncingAccounts.has(account.id);
     
-    // Color indicator and text
-    let indicator = '';
-    let bgColor = '';
-    
-    if (isIndexed && hasMessages) {
+    let indicator, bgColor;
+    if (isIndexed) {
       indicator = '🟢';
       bgColor = '#e6f5e6';
-    } else if (isIndexed && !hasMessages) {
+    } else if (isSyncing) {
       indicator = '🟡';
       bgColor = '#fff3cd';
     } else {
@@ -332,13 +334,13 @@ async function loadAccounts(domainId) {
       bgColor = '#ffe6e6';
     }
     
-    btn.textContent = `${indicator} ${account.username} (${msgCount} msgs)`;
+    btn.textContent = isSyncing
+      ? `${indicator} ${account.username} – Indexing…`
+      : `${indicator} ${account.username} (${msgCount} msgs)`;
     btn.style.backgroundColor = bgColor;
-    btn.style.padding = '8px 12px';
+    btn.style.padding = '6px 10px';
     btn.style.borderRadius = '4px';
-    btn.title = isIndexed 
-      ? (hasMessages ? 'Indexed with messages' : 'Indexed but empty')
-      : 'Not yet indexed - click refresh to ingest';
+    btn.title = isIndexed ? 'Indexed' : (isSyncing ? 'Indexing in progress' : 'Not indexed');
     
     btn.addEventListener('click', async () => {
       state.accountId = account.id;
@@ -348,39 +350,41 @@ async function loadAccounts(domainId) {
       await loadFolders(state.domainId, account.id);
     });
     
-    // Refresh button
-    if (!isIndexed || state.user?.role === 'admin') {
+    // Sync button: show for not-yet-indexed (not syncing) or admin on any account
+    const canSync = (!isIndexed && !isSyncing) || state.user?.role === 'admin';
+    if (canSync) {
       const refreshBtn = document.createElement('button');
       refreshBtn.type = 'button';
       refreshBtn.className = 'button ghost';
       refreshBtn.textContent = isIndexed ? '↻' : 'Sync';
-      refreshBtn.style.padding = '6px 10px';
-      refreshBtn.style.fontSize = '0.85rem';
+      refreshBtn.style.cssText = 'flex-shrink:0;font-size:0.72rem;padding:3px 7px;line-height:1.2;';
       refreshBtn.title = isIndexed ? 'Re-sync archive' : 'Trigger archive ingest';
       
       refreshBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        refreshBtn.disabled = true;
-        const originalText = refreshBtn.textContent;
-        refreshBtn.textContent = '⏳';
+        // Immediately show yellow / indexing state
+        syncingAccounts.add(account.id);
+        btn.style.backgroundColor = '#fff3cd';
+        btn.textContent = `🟡 ${account.username} – Indexing…`;
+        btn.title = 'Indexing in progress';
+        refreshBtn.remove();
         
         try {
           const result = await api(`/domains/${domainId}/accounts/${account.id}/ingest`, {
             method: 'POST',
           });
-          
           if (result.ok) {
-            setStatus(`Queued ingest for ${account.username}. Check back in a few moments.`);
-            // Reload accounts after a delay to show updated status
+            setStatus(`Queued ingest for ${account.username}.`);
             setTimeout(() => loadAccounts(domainId), 3000);
           } else {
             setStatus(`Error: ${result.error || 'Could not queue ingest'}`);
+            syncingAccounts.delete(account.id);
+            setTimeout(() => loadAccounts(domainId), 0);
           }
         } catch (err) {
           setStatus(`Error: ${err.message}`);
-        } finally {
-          refreshBtn.disabled = false;
-          refreshBtn.textContent = originalText;
+          syncingAccounts.delete(account.id);
+          setTimeout(() => loadAccounts(domainId), 0);
         }
       });
       
