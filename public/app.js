@@ -1122,8 +1122,14 @@ els.adminArchiveDiscoverBtn.addEventListener('click', async () => {
       method: 'POST',
       body: JSON.stringify({}),
     });
-    els.adminArchiveStatus.textContent =
-      `Discovered ${result.discovered} archive${result.discovered !== 1 ? 's' : ''} from S3.`;
+    const results = result.results || [];
+    const already = results.filter((r) => r.status === 'skipped').length;
+    const notInS3 = results.filter((r) => r.status === 'not_found').length;
+    const parts = [];
+    if (result.discovered) parts.push(`${result.discovered} new archive${result.discovered !== 1 ? 's' : ''} registered`);
+    if (already) parts.push(`${already} already registered`);
+    if (notInS3) parts.push(`${notInS3} not in S3`);
+    els.adminArchiveStatus.textContent = parts.length ? parts.join(' · ') + '.' : 'Scan complete.';
     await loadAdminDomain(state.selectedDomain.id);
   } catch (err) {
     setStatus(`Discover failed: ${err.message}`);
