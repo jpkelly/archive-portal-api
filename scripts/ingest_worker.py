@@ -33,6 +33,10 @@ AWS_ENV.setdefault('AWS_SHARED_CREDENTIALS_FILE', '/home/centos/.aws/credentials
 AWS_BIN = '/usr/bin/aws'
 
 
+def emit_progress(text):
+    print('PROGRESS:' + text, flush=True)
+
+
 def die(msg):
     print('ERROR: ' + msg, file=sys.stderr)
     sys.exit(1)
@@ -267,6 +271,7 @@ def ingest_from_s3(s3_path, domain, username):
     work = tempfile.mkdtemp(prefix='ingest_')
     try:
         tar_local = os.path.join(work, 'archive.tar.gz')
+        emit_progress('2/5 downloading')
         print('Downloading %s ...' % s3_path)
         subprocess.check_call(
             [AWS_BIN, 's3', 'cp', s3_path, tar_local],
@@ -274,6 +279,7 @@ def ingest_from_s3(s3_path, domain, username):
             env=AWS_ENV,
         )
 
+        emit_progress('3/5 parsing')
         print('Parsing messages ...')
         records = []
         with tarfile.open(tar_local, 'r:gz') as tf:
@@ -303,6 +309,7 @@ def ingest_from_s3(s3_path, domain, username):
         with open(sql_path, 'w') as f:
             f.write(build_sql(domain, username, s3_path, records))
 
+        emit_progress('4/5 inserting')
         print('Inserting into database ...')
         with open(sql_path, 'r') as f:
             result = subprocess.check_output(
@@ -311,6 +318,7 @@ def ingest_from_s3(s3_path, domain, username):
             ).decode(errors='ignore')
         for line in result.strip().split('\n'):
             print(line)
+        emit_progress('6/5 (%d messages)' % len(records))
         return len(records)
     finally:
         shutil.rmtree(work, ignore_errors=True)
@@ -323,6 +331,7 @@ if __name__ == '__main__':
     domain = sys.argv[1]
     local_user = sys.argv[2]
     s3_path = sys.argv[3]
+    emit_progress('1/5 queued')
     username = local_user if '@' in local_user else ('%s@%s' % (local_user, domain))
     count = ingest_from_s3(s3_path, domain, username)
     print('Done: %d messages ingested for %s' % (count, username))

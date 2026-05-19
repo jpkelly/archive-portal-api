@@ -415,6 +415,7 @@ async function loadAccounts(domainId) {
     
     const msgCount = account.message_count || 0;
     const isIndexed = account.sync_status === 'indexed';
+    const hasServerIndexing = account.sync_status === 'indexing';
     const isNoArchiveEmpty = noArchiveAccounts.has(account.id);
 
     // Clear syncing state once the server confirms it is indexed
@@ -422,7 +423,10 @@ async function loadAccounts(domainId) {
       syncingAccounts.delete(account.id);
       noArchiveAccounts.delete(account.id);
     }
-    const isSyncing = syncingAccounts.has(account.id);
+    if (hasServerIndexing) {
+      syncingAccounts.add(account.id);
+    }
+    const isSyncing = hasServerIndexing || syncingAccounts.has(account.id);
     
     const isIndexedWithMessages = isIndexed && msgCount > 0;
     const isIndexedEmpty = (isIndexed && msgCount === 0) || isNoArchiveEmpty;
@@ -442,8 +446,11 @@ async function loadAccounts(domainId) {
     
     const isSelected = state.accountId === account.id;
     const indicatorPrefix = indicator ? `${indicator} ` : '';
+    const progressText = (typeof account.sync_progress === 'string' && account.sync_progress.trim())
+      ? account.sync_progress.trim()
+      : 'Indexing...';
     const label = isSyncing
-      ? `${indicatorPrefix}${account.username} – Indexing…`
+      ? `${indicatorPrefix}${account.username} – ${progressText}`
       : isIndexedEmpty
         ? `${indicatorPrefix}${account.username} (empty)`
         : msgCount === 0
@@ -504,7 +511,7 @@ async function loadAccounts(domainId) {
         // Immediately show yellow / indexing state
         syncingAccounts.add(account.id);
         btn.style.backgroundColor = '#fff3cd';
-        btn.textContent = `🟡 ${account.username} – Indexing…`;
+        btn.textContent = `🟡 ${account.username} – 1/5 queued`;
         btn.title = 'Indexing in progress';
         refreshBtn.remove();
         
@@ -515,6 +522,7 @@ async function loadAccounts(domainId) {
           if (result.ok) {
             noArchiveAccounts.delete(account.id);
             setStatus(`Queued ingest for ${account.username}.`);
+            startAccountRefreshPolling();
             setTimeout(() => loadAccounts(domainId), 3000);
           } else {
             const msg = result.error || 'Could not queue ingest';

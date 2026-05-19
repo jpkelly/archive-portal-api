@@ -1,5 +1,5 @@
 const express = require('express');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { query } = require('../db');
 const { requireAuth } = require('../middleware/auth');
@@ -12,6 +12,28 @@ const awsEnv = {
   AWS_CONFIG_FILE: '/home/centos/.aws/config',
   AWS_SHARED_CREDENTIALS_FILE: '/home/centos/.aws/credentials',
 };
+const ingestProgressByAccount = new Map();
+
+function setIngestProgress(accountId, text) {
+  ingestProgressByAccount.set(accountId, { text, updatedAt: Date.now() });
+}
+
+function clearIngestProgressLater(accountId, delayMs = 30000) {
+  setTimeout(() => {
+    ingestProgressByAccount.delete(accountId);
+  }, delayMs);
+}
+
+function getIngestProgress(accountId) {
+  const progress = ingestProgressByAccount.get(accountId);
+  if (!progress) return null;
+  // Drop stale progress after 30 minutes to avoid permanent stuck badges.
+  if ((Date.now() - progress.updatedAt) > (30 * 60 * 1000)) {
+    ingestProgressByAccount.delete(accountId);
+    return null;
+  }
+  return progress;
+}
 
 router.use(requireAuth);
 
@@ -119,15 +141,49 @@ async function queueIngest(req, res) {
     }
 
     const jobId = `ingest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    setImmediate(async () => {
+    setIngestProgress(accountId, '1/5 queued');
+    setImmediate(() => {
       try {
-        await execFileAsync('python3', [
+        const child = spawn('python3', [
           '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/ingest_worker.py',
           domain,
           username,
           s3Path,
         ]);
+
+        const handleLine = (line) => {
+          const trimmed = String(line || '').trim();
+          if (!trimmed) return;
+          const marker = 'PROGRESS:';
+          if (trimmed.startsWith(marker)) {
+            setIngestProgress(accountId, trimmed.slice(marker.length).trim());
+          }
+        };
+
+        let stdoutBuffer = '';
+        child.stdout.on('data', (chunk) => {
+          stdoutBuffer += chunk.toString();
+          const lines = stdoutBuffer.split('\n');
+          stdoutBuffer = lines.pop() || '';
+          lines.forEach(handleLine);
+        });
+
+        child.stderr.on('data', () => {
+          // Worker stderr is logged by PM2; route progress should not depend on stderr text.
+        });
+
+        child.on('close', (code) => {
+          if (code === 0) {
+            clearIngestProgressLater(accountId, 10000);
+            return;
+          }
+          setIngestProgress(accountId, 'failed');
+          clearIngestProgressLater(accountId, 30000);
+          console.error(`[ingest job ${jobId}] failed with exit code`, code);
+        });
       } catch (err) {
+        setIngestProgress(accountId, 'failed');
+        clearIngestProgressLater(accountId, 30000);
         console.error(`[ingest job ${jobId}] error:`, err.message);
       }
     });
@@ -343,11 +399,23 @@ router.get('/:domainId/accounts', async (req, res) => {
       [domainId]
     );
 
-    const enriched = accounts.map((a) => ({
-      ...a,
-      sync_status: a.last_indexed_at ? 'indexed' : 'not_indexed',
-      indexed_at: a.last_indexed_at || null,
-    }));
+    const enriched = accounts.map((a) => {
+      const progress = getIngestProgress(a.id);
+      if (progress) {
+        return {
+          ...a,
+          sync_status: 'indexing',
+          sync_progress: progress.text,
+          indexed_at: a.last_indexed_at || null,
+        };
+      }
+      return {
+        ...a,
+        sync_status: a.last_indexed_at ? 'indexed' : 'not_indexed',
+        sync_progress: null,
+        indexed_at: a.last_indexed_at || null,
+      };
+    });
 
     return res.json({ accounts: enriched });
   } catch (err) {
