@@ -419,33 +419,42 @@ async function loadAccounts(domainId) {
     if (isIndexed) syncingAccounts.delete(account.id);
     const isSyncing = syncingAccounts.has(account.id);
     
-    let indicator, bgColor;
-    if (isIndexed) {
-      indicator = '🟢';
-      bgColor = '#e6f5e6';
-    } else if (isSyncing) {
+    const isIndexedWithMessages = isIndexed && msgCount > 0;
+
+    let indicator = '';
+    let bgColor = '';
+    if (isSyncing) {
       indicator = '🟡';
       bgColor = '#fff3cd';
-    } else {
-      indicator = '🔴';
-      bgColor = '#ffe6e6';
+    } else if (isIndexedWithMessages) {
+      indicator = '🟢';
+      bgColor = '#e6f5e6';
     }
     
     const isSelected = state.accountId === account.id;
     const selectedPrefix = isSelected ? '▶ ' : '';
+    const indicatorPrefix = indicator ? `${indicator} ` : '';
     const label = isSyncing
-      ? `${selectedPrefix}${indicator} ${account.username} – Indexing…`
+      ? `${selectedPrefix}${indicatorPrefix}${account.username} – Indexing…`
       : msgCount === 0
-        ? `${selectedPrefix}${indicator} ${account.username} (empty)`
-        : `${selectedPrefix}${indicator} ${account.username} (${msgCount} msgs)`;
+        ? `${selectedPrefix}${indicatorPrefix}${account.username} (empty)`
+        : `${selectedPrefix}${indicatorPrefix}${account.username} (${msgCount} msgs)`;
 
     btn.textContent = label;
-    btn.style.backgroundColor = bgColor;
+    btn.style.backgroundColor = bgColor || '';
     btn.style.padding = '6px 10px';
     btn.style.borderRadius = '4px';
     btn.classList.toggle('selected', isSelected);
     btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
-    btn.title = isIndexed ? 'Indexed' : (isSyncing ? 'Indexing in progress' : 'Not indexed');
+    if (isSyncing) {
+      btn.title = 'Indexing in progress';
+    } else if (isIndexedWithMessages) {
+      btn.title = 'Indexed';
+    } else if (isIndexed && msgCount === 0) {
+      btn.title = 'Indexed (empty)';
+    } else {
+      btn.title = 'Not indexed';
+    }
     
     btn.addEventListener('click', async () => {
       state.accountId = account.id;
