@@ -440,6 +440,107 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.post('/discover-all', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const domains = await query(
+      `SELECT d.id, d.name FROM domains d ORDER BY d.name ASC`
+    );
+
+    let latestTimestamp = '';
+    try {
+      latestTimestamp = await getLatestArchiveTimestamp();
+    } catch (err) {
+      console.error(`[discover-all] getLatestArchiveTimestamp threw: ${err.message}`);
+      return res.status(500).json({ error: 'Could not list S3 archive runs', detail: err.message });
+    }
+
+    if (!latestTimestamp) {
+      return res.json({ ok: true, discovered: 0, total: 0, message: 'No archive runs found in S3' });
+    }
+
+    let totalDiscovered = 0;
+    const domainResults = [];
+
+    for (const domain of domains) {
+      const accounts = await query(
+        `SELECT a.id, a.username FROM mail_accounts a WHERE a.domain_id = ?`,
+        [domain.id]
+      );
+
+      let domainDiscovered = 0;
+      for (const account of accounts) {
+        const existing = await getArchiveState(account.id);
+        if (existing) continue;
+
+        const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
+        const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain.name}/${usernameLocal}/`;
+        let s3Stdout = '';
+        try {
+          const s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
+          s3Stdout = s3Result.stdout || '';
+        } catch (s3Err) {
+          continue;
+        }
+
+        const tarball = s3Stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => line.split(/\s+/).pop())
+          .find((name) => name.endsWith('.tar.gz'));
+
+        const s3Uri = tarball ? `${prefix}${tarball}` : null;
+        if (!s3Uri) continue;
+
+        const range = inferRangeFromS3Uri(s3Uri) || {
+          mode: 'before',
+          beforeDate: null,
+          fromDate: '1970-01-01',
+          toDate: new Date().toISOString().slice(0, 10),
+          label: 'discovered (range unknown)',
+        };
+
+        await setArchiveState(account.id, {
+          job_id: `discovered_${latestTimestamp}`,
+          status: 'completed',
+          verified: true,
+          verification_checked_at: new Date().toISOString(),
+          verification_message: 'Archive discovered in S3',
+          deletion_status: 'ready',
+          deletion_message: 'Deletion is allowed for this verified range',
+          domain: domain.name,
+          username: usernameLocal,
+          mode: range.mode,
+          beforeDate: range.beforeDate,
+          fromDate: range.fromDate,
+          toDate: range.toDate,
+          range_label: range.label,
+          requested_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+          deleted_at: null,
+          error: null,
+          archive_s3_uri: s3Uri,
+          archive_file_count: 0,
+          archive_source_bytes: 0,
+          archive_bytes: 0,
+          delete_count: null,
+        });
+
+        domainDiscovered++;
+        totalDiscovered++;
+      }
+
+      domainResults.push({ domain: domain.name, discovered: domainDiscovered, accounts: accounts.length });
+    }
+
+    return res.json({ ok: true, discovered: totalDiscovered, domains: domainResults });
+  } catch (err) {
+    return res.status(500).json({ error: 'Discover all failed', detail: err.message });
+  }
+});
+
 router.get('/:domainId', async (req, res) => {
   const { domainId } = req.params;
 

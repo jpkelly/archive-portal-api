@@ -72,6 +72,7 @@ const els = {
   adminArchiveVerifyBtn: document.getElementById('adminArchiveVerifyBtn'),
   adminDeleteMessagesBtn: document.getElementById('adminDeleteMessagesBtn'),
   adminArchiveDiscoverBtn: document.getElementById('adminArchiveDiscoverBtn'),
+  adminArchiveDiscoverAllBtn: document.getElementById('adminArchiveDiscoverAllBtn'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
   portalTabs: document.getElementById('portalTabs'),
   tabEmailViewer: document.getElementById('tabEmailViewer'),
@@ -1035,6 +1036,30 @@ els.adminArchiveDiscoverBtn.addEventListener('click', async () => {
     setStatus(`Discover failed: ${err.message}`);
   }
   els.adminArchiveDiscoverBtn.disabled = false;
+});
+
+els.adminArchiveDiscoverAllBtn.addEventListener('click', async () => {
+  els.adminArchiveDiscoverAllBtn.disabled = true;
+  els.adminArchiveStatus.textContent = 'Scanning S3 for archives across all domains…';
+  try {
+    const result = await api('/domains/discover-all', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    const domainSummary = (result.domains || [])
+      .filter((d) => d.discovered > 0)
+      .map((d) => `${d.domain}: ${d.discovered}`)
+      .join(', ');
+    els.adminArchiveStatus.textContent =
+      `Discovered ${result.discovered} archive${result.discovered !== 1 ? 's' : ''} across all domains` +
+      (domainSummary ? ` (${domainSummary})` : '') + '.';
+    if (state.selectedDomain) {
+      await loadAdminDomain(state.selectedDomain.id);
+    }
+  } catch (err) {
+    setStatus(`Discover all failed: ${err.message}`);
+  }
+  els.adminArchiveDiscoverAllBtn.disabled = false;
 });
 
 els.adminArchiveStartBtn.addEventListener('click', async () => {
