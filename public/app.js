@@ -473,6 +473,10 @@ async function loadAccounts(domainId) {
       state.folderId = null;
       resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
+      if (!isIndexed && !isSyncing) {
+        clearList(els.folderList, 'Not indexed.');
+        return;
+      }
       await loadFolders(state.domainId, account.id);
     });
     
