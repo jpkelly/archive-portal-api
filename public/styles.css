@@ -374,7 +374,14 @@ input {
 .status {
   margin-top: 10px;
   min-height: 20px;
+}
+
+.status.status-error {
   color: #9c2e2e;
+}
+
+.status.status-info {
+  color: #2a3a4e;
 }
 
 .hidden {

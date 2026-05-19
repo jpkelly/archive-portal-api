@@ -57,8 +57,11 @@ const els = {
   adminQueueSyncBtn: document.getElementById('adminQueueSyncBtn'),
 };
 
-function setStatus(message) {
+function setStatus(message, level = 'error') {
   els.status.textContent = message || '';
+  els.status.classList.remove('status-error', 'status-info');
+  if (!message) return;
+  els.status.classList.add(level === 'info' ? 'status-info' : 'status-error');
 }
 
 function setLoginBusy(busy) {
@@ -381,7 +384,12 @@ async function loadAccounts(domainId) {
             setStatus(`Queued ingest for ${account.username}.`);
             setTimeout(() => loadAccounts(domainId), 3000);
           } else {
-            setStatus(`Error: ${result.error || 'Could not queue ingest'}`);
+            const msg = result.error || 'Could not queue ingest';
+            if (msg === 'No archives found in S3') {
+              setStatus(`Info: No archives found in S3 for ${account.username}.`, 'info');
+            } else {
+              setStatus(`Error: ${msg}`);
+            }
             syncingAccounts.delete(account.id);
             setTimeout(() => loadAccounts(domainId), 0);
           }
