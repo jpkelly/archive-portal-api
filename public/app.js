@@ -413,7 +413,8 @@ async function loadAccounts(domainId) {
     btn.style.whiteSpace = 'nowrap';
     
     const msgCount = account.message_count || 0;
-    const isIndexed = account.sync_status === 'indexed';
+    const hasIndexedTimestamp = Boolean(account.last_indexed_at || account.indexed_at);
+    const isIndexed = account.sync_status === 'indexed' || hasIndexedTimestamp;
 
     // Clear syncing state once the server confirms it is indexed
     if (isIndexed) syncingAccounts.delete(account.id);
@@ -475,6 +476,10 @@ async function loadAccounts(domainId) {
       els.messageDetail.textContent = 'Select a message to view details.';
       if (!isIndexed && !isSyncing) {
         clearList(els.folderList, 'Not indexed.');
+        return;
+      }
+      if (isIndexedEmpty) {
+        clearList(els.folderList, 'No items found.');
         return;
       }
       await loadFolders(state.domainId, account.id);
