@@ -13,6 +13,7 @@ const awsEnv = {
   AWS_SHARED_CREDENTIALS_FILE: '/home/centos/.aws/credentials',
 };
 const ingestProgressByAccount = new Map();
+const archiveStateByAccount = new Map();
 
 function setIngestProgress(accountId, text) {
   ingestProgressByAccount.set(accountId, { text, updatedAt: Date.now() });
@@ -33,6 +34,94 @@ function getIngestProgress(accountId) {
     return null;
   }
   return progress;
+}
+
+function parseIsoDateOnly(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null;
+  return trimmed;
+}
+
+function toIsoDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeArchiveRange(payload) {
+  const mode = String((payload && payload.mode) || 'before');
+  if (!['before', 'range'].includes(mode)) {
+    return { error: 'mode must be either "before" or "range"' };
+  }
+
+  if (mode === 'before') {
+    const beforeDate = parseIsoDateOnly(payload && payload.beforeDate);
+    if (!beforeDate) {
+      return { error: 'beforeDate (YYYY-MM-DD) is required for mode "before"' };
+    }
+    const before = new Date(`${beforeDate}T00:00:00Z`);
+    const to = new Date(before.getTime() - (24 * 60 * 60 * 1000));
+    return {
+      mode,
+      beforeDate,
+      fromDate: '1970-01-01',
+      toDate: toIsoDateOnly(to),
+      label: `before ${beforeDate}`,
+    };
+  }
+
+  const fromDate = parseIsoDateOnly(payload && payload.fromDate);
+  const toDate = parseIsoDateOnly(payload && payload.toDate);
+  if (!fromDate || !toDate) {
+    return { error: 'fromDate and toDate (YYYY-MM-DD) are required for mode "range"' };
+  }
+  if (new Date(`${fromDate}T00:00:00Z`) > new Date(`${toDate}T00:00:00Z`)) {
+    return { error: 'fromDate must be before or equal to toDate' };
+  }
+  return {
+    mode,
+    fromDate,
+    toDate,
+    beforeDate: null,
+    label: `${fromDate} to ${toDate}`,
+  };
+}
+
+async function verifyS3ObjectExists(s3Uri) {
+  if (!s3Uri) return false;
+  try {
+    await execFileAsync('/usr/bin/aws', ['s3', 'ls', s3Uri], { env: awsEnv, maxBuffer: 1024 * 1024 });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function parseKeyValueStdout(stdout) {
+  const out = {};
+  String(stdout || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const idx = line.indexOf('=');
+      if (idx <= 0) return;
+      const key = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      out[key] = value;
+    });
+  return out;
+}
+
+async function getAccountDomainAndUser(domainId, accountId) {
+  const rows = await query(
+    `SELECT a.id, a.username, d.name AS domain_name
+     FROM mail_accounts a
+     JOIN domains d ON d.id = a.domain_id
+     WHERE a.id = ? AND d.id = ?
+     LIMIT 1`,
+    [accountId, domainId]
+  );
+  return rows[0] || null;
 }
 
 router.use(requireAuth);
@@ -400,6 +489,7 @@ router.get('/:domainId/accounts', async (req, res) => {
     );
 
     const enriched = accounts.map((a) => {
+      const archive = archiveStateByAccount.get(a.id) || null;
       const progress = getIngestProgress(a.id);
       if (progress) {
         return {
@@ -407,6 +497,7 @@ router.get('/:domainId/accounts', async (req, res) => {
           sync_status: 'indexing',
           sync_progress: progress.text,
           indexed_at: a.last_indexed_at || null,
+          archive_state: archive,
         };
       }
       return {
@@ -414,6 +505,7 @@ router.get('/:domainId/accounts', async (req, res) => {
         sync_status: a.last_indexed_at ? 'indexed' : 'not_indexed',
         sync_progress: null,
         indexed_at: a.last_indexed_at || null,
+        archive_state: archive,
       };
     });
 
@@ -442,6 +534,281 @@ router.get('/:domainId/accounts/:accountId/folders', async (req, res) => {
     return res.json({ folders });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch folders', detail: err.message });
+  }
+});
+
+router.get('/:domainId/accounts/:accountId/archive-state', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!(await canAccessDomain(req.auth.sub, domainId, req.auth.role))) {
+      return res.status(403).json({ error: 'Access denied for this domain' });
+    }
+
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const state = archiveStateByAccount.get(accountId) || null;
+    return res.json({ account_id: accountId, archive: state });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch archive state', detail: err.message });
+  }
+});
+
+router.post('/:domainId/accounts/:accountId/archive/create', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const normalized = normalizeArchiveRange(req.body || {});
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error });
+    }
+
+    const usernameLocal = String(account.username || '').split('@')[0];
+    const jobId = `archive_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    archiveStateByAccount.set(accountId, {
+      job_id: jobId,
+      status: 'running',
+      verified: false,
+      verification_checked_at: null,
+      verification_message: 'Archive job started',
+      deletion_status: 'blocked',
+      deletion_message: 'Deletion is blocked until archive verification passes',
+      domain: account.domain_name,
+      username: usernameLocal,
+      mode: normalized.mode,
+      beforeDate: normalized.beforeDate,
+      fromDate: normalized.fromDate,
+      toDate: normalized.toDate,
+      range_label: normalized.label,
+      requested_at: new Date().toISOString(),
+      completed_at: null,
+      error: null,
+      archive_s3_uri: null,
+      archive_file_count: 0,
+      archive_source_bytes: 0,
+      archive_bytes: 0,
+      delete_count: null,
+    });
+
+    setImmediate(() => {
+      try {
+        const child = spawn(
+          'bash',
+          [
+            '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+            'archive',
+            account.domain_name,
+            usernameLocal,
+            normalized.fromDate,
+            normalized.toDate,
+            normalized.mode,
+          ],
+          { env: awsEnv }
+        );
+
+        let stdout = '';
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk.toString();
+        });
+
+        child.stderr.on('data', () => {
+          // stderr is logged by PM2; UI state is based on script key/value output.
+        });
+
+        child.on('close', async (code) => {
+          const current = archiveStateByAccount.get(accountId);
+          if (!current || current.job_id !== jobId) return;
+
+          const parsed = parseKeyValueStdout(stdout);
+          if (code !== 0) {
+            archiveStateByAccount.set(accountId, {
+              ...current,
+              status: 'failed',
+              verified: false,
+              verification_checked_at: new Date().toISOString(),
+              verification_message: 'Archive job failed',
+              completed_at: new Date().toISOString(),
+              error: parsed.ERROR || 'Archive script failed',
+            });
+            return;
+          }
+
+          if (String(parsed.STATUS || '') === 'no_files') {
+            archiveStateByAccount.set(accountId, {
+              ...current,
+              status: 'completed_no_files',
+              verified: true,
+              verification_checked_at: new Date().toISOString(),
+              verification_message: 'No matching files in this range',
+              deletion_status: 'ready',
+              deletion_message: 'No files matched; delete action is a no-op for this range',
+              completed_at: new Date().toISOString(),
+              archive_s3_uri: null,
+              archive_file_count: 0,
+              archive_source_bytes: 0,
+              archive_bytes: 0,
+              error: null,
+            });
+            return;
+          }
+
+          const s3Uri = parsed.ARCHIVE_S3_URI || null;
+          const verified = await verifyS3ObjectExists(s3Uri);
+          archiveStateByAccount.set(accountId, {
+            ...current,
+            status: 'completed',
+            verified,
+            verification_checked_at: new Date().toISOString(),
+            verification_message: verified ? 'Archive found in S3' : 'Archive upload completed but S3 verification failed',
+            deletion_status: verified ? 'ready' : 'blocked',
+            deletion_message: verified
+              ? 'Deletion is allowed for this verified range'
+              : 'Deletion is blocked until archive verification passes',
+            completed_at: new Date().toISOString(),
+            error: null,
+            archive_s3_uri: s3Uri,
+            archive_file_count: Number(parsed.FILE_COUNT || 0),
+            archive_source_bytes: Number(parsed.SOURCE_BYTES || 0),
+            archive_bytes: Number(parsed.ARCHIVE_BYTES || 0),
+          });
+        });
+      } catch (err) {
+        const current = archiveStateByAccount.get(accountId);
+        if (!current || current.job_id !== jobId) return;
+        archiveStateByAccount.set(accountId, {
+          ...current,
+          status: 'failed',
+          verified: false,
+          verification_checked_at: new Date().toISOString(),
+          verification_message: 'Archive job failed to start',
+          completed_at: new Date().toISOString(),
+          error: err.message,
+        });
+      }
+    });
+
+    return res.json({
+      ok: true,
+      account_id: accountId,
+      job_id: jobId,
+      message: `Archive job queued for ${account.username} (${normalized.label})`,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not start archive job', detail: err.message });
+  }
+});
+
+router.post('/:domainId/accounts/:accountId/archive/verify', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const current = archiveStateByAccount.get(accountId);
+    if (!current) {
+      return res.status(404).json({ error: 'No archive job found for this account' });
+    }
+    if (current.status === 'running') {
+      return res.status(400).json({ error: 'Archive job is still running' });
+    }
+
+    const verified = current.archive_s3_uri
+      ? await verifyS3ObjectExists(current.archive_s3_uri)
+      : current.status === 'completed_no_files';
+
+    const next = {
+      ...current,
+      verified,
+      verification_checked_at: new Date().toISOString(),
+      verification_message: verified
+        ? (current.archive_s3_uri ? 'Archive found in S3' : 'No matching files in this range')
+        : 'Archive object not found in S3',
+      deletion_status: verified ? 'ready' : 'blocked',
+      deletion_message: verified
+        ? 'Deletion is allowed for this verified range'
+        : 'Deletion is blocked until archive verification passes',
+    };
+    archiveStateByAccount.set(accountId, next);
+
+    return res.json({ ok: true, account_id: accountId, archive: next });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not verify archive', detail: err.message });
+  }
+});
+
+router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const current = archiveStateByAccount.get(accountId);
+    if (!current) {
+      return res.status(400).json({ error: 'No archive state found. Run archive first.' });
+    }
+    if (!current.verified) {
+      return res.status(400).json({ error: 'Deletion is blocked until archive verification passes.' });
+    }
+    if (current.status === 'running') {
+      return res.status(400).json({ error: 'Archive job is still running.' });
+    }
+
+    const usernameLocal = String(account.username || '').split('@')[0];
+    const { stdout } = await execFileAsync(
+      'bash',
+      [
+        '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+        'delete',
+        account.domain_name,
+        usernameLocal,
+        current.fromDate,
+        current.toDate,
+        current.mode,
+      ],
+      { env: awsEnv, maxBuffer: 1024 * 1024 }
+    );
+
+    const parsed = parseKeyValueStdout(stdout);
+    const deletedCount = Number(parsed.DELETED_COUNT || 0);
+
+    const next = {
+      ...current,
+      deletion_status: 'completed',
+      deletion_message: `Deleted ${deletedCount} files from server maildir for verified range ${current.range_label}`,
+      delete_count: deletedCount,
+      deleted_at: new Date().toISOString(),
+    };
+    archiveStateByAccount.set(accountId, next);
+
+    return res.json({
+      ok: true,
+      account_id: accountId,
+      deleted_count: deletedCount,
+      archive: next,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not delete messages', detail: err.message });
   }
 });
 

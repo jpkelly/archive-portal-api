@@ -301,6 +301,97 @@ input {
   word-break: break-word;
 }
 
+/* ── Archive account checklist ── */
+.archive-account-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.archive-account-header-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.archive-account-header-btns {
+  display: flex;
+  gap: 6px;
+}
+
+.archive-account-header-btns .button {
+  padding: 5px 10px;
+  font-size: 0.78rem;
+}
+
+.archive-account-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.archive-account-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.archive-account-row:last-child {
+  border-bottom: none;
+}
+
+.archive-account-row:hover {
+  background: var(--hover);
+}
+
+.archive-account-label {
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-account-msgs {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.archive-account-range {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.archive-status-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.archive-status-badge[data-state="none"]     { background: #eef0f3; color: #555; }
+.archive-status-badge[data-state="pending"]  { background: #fff3cd; color: #856404; }
+.archive-status-badge[data-state="running"]  { background: #cce5ff; color: #004085; }
+.archive-status-badge[data-state="complete"] { background: #d4edda; color: #155724; }
+.archive-status-badge[data-state="verified"] { background: #155724; color: #fff; }
+.archive-status-badge[data-state="error"]    { background: #f8d7da; color: #721c24; }
+
+.archive-actions-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
 .admin-member-list {
   max-height: 220px;
 }

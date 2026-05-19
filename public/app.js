@@ -16,8 +16,7 @@ const state = {
   selectedDomain: null,
   selectedMembers: [],
   adminAccounts: [],
-  adminArchiveAccountId: null,
-  adminArchiveState: null,
+  adminArchiveSelectedIds: new Set(),
   activeTab: 'viewer',
 };
 
@@ -59,7 +58,9 @@ const els = {
   adminDomainMembers: document.getElementById('adminDomainMembers'),
   adminAccountSyncStatus: document.getElementById('adminAccountSyncStatus'),
   adminQueueSyncBtn: document.getElementById('adminQueueSyncBtn'),
-  adminArchiveAccountSelect: document.getElementById('adminArchiveAccountSelect'),
+  adminArchiveAccountList: document.getElementById('adminArchiveAccountList'),
+  adminArchiveSelectAll: document.getElementById('adminArchiveSelectAll'),
+  adminArchiveSelectNone: document.getElementById('adminArchiveSelectNone'),
   adminArchiveMode: document.getElementById('adminArchiveMode'),
   adminArchiveBeforeWrap: document.getElementById('adminArchiveBeforeWrap'),
   adminArchiveBeforeDate: document.getElementById('adminArchiveBeforeDate'),
@@ -279,42 +280,86 @@ function renderAccountSyncStatus(accounts) {
   });
 }
 
-function getSelectedAdminArchiveAccount() {
-  if (!state.adminArchiveAccountId) return null;
-  return state.adminAccounts.find((a) => a.id === state.adminArchiveAccountId) || null;
-}
+function renderArchiveAccountTable(accounts) {
+  const container = els.adminArchiveAccountList;
+  container.innerHTML = '';
 
-function renderArchiveState() {
-  const account = getSelectedAdminArchiveAccount();
-  if (!account) {
-    els.adminArchiveStatus.textContent = 'No account selected for archive lifecycle actions.';
-    els.adminDeleteMessagesBtn.disabled = true;
+  if (!accounts || !accounts.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.style.cssText = 'padding: 8px; font-size: 0.85rem; margin: 0;';
+    empty.textContent = 'No accounts found for this domain.';
+    container.appendChild(empty);
     return;
   }
 
-  const s = state.adminArchiveState;
-  if (!s) {
-    els.adminArchiveStatus.textContent = `No archive operation found for ${account.username}.`;
-    els.adminDeleteMessagesBtn.disabled = true;
-    return;
-  }
+  accounts.forEach((account) => {
+    const archive = account.archive_state;
+    const id = String(account.id);
 
-  const verified = s.verified ? 'Verified' : 'Not verified';
-  const verifyMark = s.verified ? 'OK' : 'PENDING';
-  const archiveLocation = s.archive_s3_uri ? ` | S3: ${s.archive_s3_uri}` : '';
-  const deleteMsg = s.deletion_message ? ` | Delete: ${s.deletion_message}` : '';
-  const rangeText = s.range_label || (s.mode === 'before' ? `before ${s.beforeDate}` : `${s.fromDate} to ${s.toDate}`);
-  els.adminArchiveStatus.textContent = [
-    `${account.username}`,
-    `Range: ${rangeText}`,
-    `Status: ${s.status}`,
-    `Verification: ${verified} (${verifyMark})`,
-    s.archive_file_count ? `Files: ${s.archive_file_count}` : null,
-    s.delete_count !== null && typeof s.delete_count !== 'undefined' ? `Deleted: ${s.delete_count}` : null,
-    s.error ? `Error: ${s.error}` : null,
-  ].filter(Boolean).join(' | ') + archiveLocation + deleteMsg;
+    const row = document.createElement('div');
+    row.className = 'archive-account-row';
 
-  els.adminDeleteMessagesBtn.disabled = !(s.verified && s.status !== 'running');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `archiveAcct_${id}`;
+    checkbox.value = id;
+    checkbox.checked = state.adminArchiveSelectedIds.has(id);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        state.adminArchiveSelectedIds.add(id);
+      } else {
+        state.adminArchiveSelectedIds.delete(id);
+      }
+    });
+
+    const label = document.createElement('label');
+    label.htmlFor = `archiveAcct_${id}`;
+    label.className = 'archive-account-label';
+    label.textContent = account.username;
+
+    const msgs = document.createElement('span');
+    msgs.className = 'archive-account-msgs';
+    msgs.textContent = account.message_count > 0 ? `${account.message_count} msgs` : 'empty';
+
+    const badge = document.createElement('span');
+    badge.className = 'archive-status-badge';
+    if (!archive) {
+      badge.textContent = 'No Archive';
+      badge.dataset.state = 'none';
+    } else if (archive.status === 'running') {
+      badge.textContent = 'Running\u2026';
+      badge.dataset.state = 'running';
+    } else if (archive.verified) {
+      badge.textContent = '\u2713 Verified';
+      badge.dataset.state = 'verified';
+    } else if (archive.status === 'complete' || archive.status === 'done') {
+      badge.textContent = 'Complete';
+      badge.dataset.state = 'complete';
+    } else if (archive.status === 'error') {
+      badge.textContent = 'Error';
+      badge.dataset.state = 'error';
+    } else {
+      badge.textContent = archive.status || 'Pending';
+      badge.dataset.state = 'pending';
+    }
+
+    const range = document.createElement('span');
+    range.className = 'archive-account-range';
+    if (archive) {
+      range.textContent = archive.range_label
+        || (archive.mode === 'before' ? `before ${archive.beforeDate}` : `${archive.fromDate} \u2192 ${archive.toDate}`);
+    } else {
+      range.textContent = '\u2014';
+    }
+
+    row.appendChild(checkbox);
+    row.appendChild(label);
+    row.appendChild(msgs);
+    row.appendChild(badge);
+    row.appendChild(range);
+    container.appendChild(row);
+  });
 }
 
 function applyArchiveModeVisibility() {
@@ -323,37 +368,6 @@ function applyArchiveModeVisibility() {
   els.adminArchiveBeforeWrap.classList.toggle('hidden', !isBefore);
   els.adminArchiveFromWrap.classList.toggle('hidden', isBefore);
   els.adminArchiveToWrap.classList.toggle('hidden', isBefore);
-}
-
-function populateAdminArchiveAccounts(accounts) {
-  els.adminArchiveAccountSelect.innerHTML = '';
-  (accounts || []).forEach((account) => {
-    const opt = document.createElement('option');
-    opt.value = account.id;
-    opt.textContent = account.username;
-    if (state.adminArchiveAccountId === account.id) {
-      opt.selected = true;
-    }
-    els.adminArchiveAccountSelect.appendChild(opt);
-  });
-
-  if (!state.adminArchiveAccountId && accounts && accounts.length) {
-    state.adminArchiveAccountId = accounts[0].id;
-  }
-  if (state.adminArchiveAccountId) {
-    els.adminArchiveAccountSelect.value = state.adminArchiveAccountId;
-  }
-}
-
-async function loadAdminArchiveState(accountId) {
-  if (!state.selectedDomain || !accountId) {
-    state.adminArchiveState = null;
-    renderArchiveState();
-    return;
-  }
-  const data = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`);
-  state.adminArchiveState = data.archive || null;
-  renderArchiveState();
 }
 
 function populateAdminControls(domain) {
@@ -379,13 +393,7 @@ async function loadAdminDomain(domainId) {
   const accountsData = await api(`/domains/${domainId}/accounts`);
   state.adminAccounts = accountsData.accounts || [];
   renderAccountSyncStatus(state.adminAccounts);
-  populateAdminArchiveAccounts(state.adminAccounts);
-  if (state.adminArchiveAccountId) {
-    await loadAdminArchiveState(state.adminArchiveAccountId);
-  } else {
-    state.adminArchiveState = null;
-    renderArchiveState();
-  }
+  renderArchiveAccountTable(state.adminAccounts);
 }
 
 async function openDomain(domain) {
@@ -1000,103 +1008,152 @@ els.adminArchiveMode.addEventListener('change', () => {
   applyArchiveModeVisibility();
 });
 
-els.adminArchiveAccountSelect.addEventListener('change', async () => {
-  state.adminArchiveAccountId = els.adminArchiveAccountSelect.value || null;
-  await loadAdminArchiveState(state.adminArchiveAccountId);
+els.adminArchiveSelectAll.addEventListener('click', () => {
+  state.adminArchiveSelectedIds = new Set(state.adminAccounts.map((a) => String(a.id)));
+  renderArchiveAccountTable(state.adminAccounts);
+});
+
+els.adminArchiveSelectNone.addEventListener('click', () => {
+  state.adminArchiveSelectedIds.clear();
+  renderArchiveAccountTable(state.adminAccounts);
 });
 
 els.adminArchiveStartBtn.addEventListener('click', async () => {
-  if (!state.selectedDomain || !state.adminArchiveAccountId) return;
+  if (!state.selectedDomain) return;
+  const selected = Array.from(state.adminArchiveSelectedIds);
+  if (!selected.length) {
+    setStatus('Select at least one account to archive.');
+    return;
+  }
 
   const mode = els.adminArchiveMode.value;
   const payload = { mode };
   if (mode === 'before') {
     payload.beforeDate = els.adminArchiveBeforeDate.value;
     if (!payload.beforeDate) {
-      setStatus('before date is required for before mode');
+      setStatus('Before Date is required.');
       return;
     }
   } else {
     payload.fromDate = els.adminArchiveFromDate.value;
     payload.toDate = els.adminArchiveToDate.value;
     if (!payload.fromDate || !payload.toDate) {
-      setStatus('from and to dates are required for range mode');
+      setStatus('From Date and To Date are required for range mode.');
       return;
     }
   }
 
   els.adminArchiveStartBtn.disabled = true;
-  try {
-    const data = await api(`/domains/${state.selectedDomain.id}/accounts/${state.adminArchiveAccountId}/archive/create`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    setStatus(data.message || 'Archive job started.', 'info');
-    await loadAdminArchiveState(state.adminArchiveAccountId);
+  let succeeded = 0;
+  let failed = 0;
 
-    // Poll while the archive job is running.
-    let guard = 0;
-    while (guard < 80) {
-      guard += 1;
-      await new Promise((resolve) => setTimeout(resolve, 3000));
-      await loadAdminArchiveState(state.adminArchiveAccountId);
-      if (!state.adminArchiveState || state.adminArchiveState.status !== 'running') {
-        break;
+  for (const accountId of selected) {
+    const account = state.adminAccounts.find((a) => String(a.id) === accountId);
+    const username = account ? account.username : accountId;
+    els.adminArchiveStatus.textContent = `Archiving ${username}\u2026 (${succeeded + failed + 1}/${selected.length})`;
+
+    try {
+      await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/create`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      // Poll until job finishes.
+      let guard = 0;
+      while (guard < 80) {
+        guard += 1;
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const sd = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`);
+        if (!sd.archive || sd.archive.status !== 'running') break;
       }
+      succeeded += 1;
+    } catch (err) {
+      setStatus(`Error archiving ${username}: ${err.message}`);
+      failed += 1;
     }
-
-    await loadAdminDomain(state.selectedDomain.id);
-  } catch (err) {
-    setStatus(err.message);
-  } finally {
-    els.adminArchiveStartBtn.disabled = false;
   }
+
+  els.adminArchiveStatus.textContent = `Archive complete: ${succeeded} succeeded, ${failed} failed.`;
+  await loadAdminDomain(state.selectedDomain.id);
+  els.adminArchiveStartBtn.disabled = false;
 });
 
 els.adminArchiveVerifyBtn.addEventListener('click', async () => {
-  if (!state.selectedDomain || !state.adminArchiveAccountId) return;
-  try {
-    await api(`/domains/${state.selectedDomain.id}/accounts/${state.adminArchiveAccountId}/archive/verify`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-    await loadAdminArchiveState(state.adminArchiveAccountId);
-    await loadAdminDomain(state.selectedDomain.id);
-    setStatus('Archive verification completed.', 'info');
-  } catch (err) {
-    setStatus(err.message);
-  }
-});
-
-els.adminDeleteMessagesBtn.addEventListener('click', async () => {
-  if (!state.selectedDomain || !state.adminArchiveAccountId) return;
-  if (!state.adminArchiveState || !state.adminArchiveState.verified) {
-    setStatus('Deletion is blocked until archive verification passes.');
+  if (!state.selectedDomain) return;
+  const selected = Array.from(state.adminArchiveSelectedIds);
+  if (!selected.length) {
+    setStatus('Select at least one account to verify.');
     return;
   }
 
-  const account = getSelectedAdminArchiveAccount();
-  if (!account) return;
+  let succeeded = 0;
+  let failed = 0;
+  for (const accountId of selected) {
+    const account = state.adminAccounts.find((a) => String(a.id) === accountId);
+    const username = account ? account.username : accountId;
+    try {
+      await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/verify`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      succeeded += 1;
+    } catch (err) {
+      setStatus(`Error verifying ${username}: ${err.message}`);
+      failed += 1;
+    }
+  }
 
-  const rangeLabel = state.adminArchiveState.range_label || `${state.adminArchiveState.fromDate} to ${state.adminArchiveState.toDate}`;
-  const ok = window.confirm(`Delete server-side messages for ${account.username} in range ${rangeLabel}? This cannot be undone.`);
+  setStatus(`Verification complete: ${succeeded} succeeded, ${failed} failed.`, 'info');
+  await loadAdminDomain(state.selectedDomain.id);
+});
+
+els.adminDeleteMessagesBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  const selected = Array.from(state.adminArchiveSelectedIds);
+  if (!selected.length) {
+    setStatus('Select at least one account.');
+    return;
+  }
+
+  const verifiedSelected = selected.filter((accountId) => {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === accountId);
+    return a && a.archive_state && a.archive_state.verified;
+  });
+
+  if (!verifiedSelected.length) {
+    setStatus('None of the selected accounts have a verified archive. Run Verify Archive first.');
+    return;
+  }
+
+  const names = verifiedSelected.map((id) => {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+    return a ? a.username : id;
+  }).join(', ');
+  const ok = window.confirm(`Delete server-side messages for:\n${names}\n\nThis cannot be undone.`);
   if (!ok) return;
 
   els.adminDeleteMessagesBtn.disabled = true;
-  try {
-    const data = await api(`/domains/${state.selectedDomain.id}/accounts/${state.adminArchiveAccountId}/archive/delete-messages`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-    setStatus(`Deleted ${data.deleted_count} server-side files for ${account.username}.`, 'info');
-    await loadAdminArchiveState(state.adminArchiveAccountId);
-    await loadAdminDomain(state.selectedDomain.id);
-    await loadAccounts(state.selectedDomain.id);
-  } catch (err) {
-    setStatus(err.message);
-  } finally {
-    els.adminDeleteMessagesBtn.disabled = false;
+  let totalDeleted = 0;
+  let failed = 0;
+
+  for (const accountId of verifiedSelected) {
+    const account = state.adminAccounts.find((a) => String(a.id) === accountId);
+    const username = account ? account.username : accountId;
+    try {
+      const data = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/delete-messages`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      totalDeleted += data.deleted_count || 0;
+    } catch (err) {
+      setStatus(`Error deleting messages for ${username}: ${err.message}`);
+      failed += 1;
+    }
   }
+
+  setStatus(`Deleted ${totalDeleted} server-side messages across ${verifiedSelected.length - failed} account(s).`, 'info');
+  await loadAdminDomain(state.selectedDomain.id);
+  await loadAccounts(state.selectedDomain.id);
+  els.adminDeleteMessagesBtn.disabled = false;
 });
 
 els.adminAddMemberBtn.addEventListener('click', async () => {
@@ -1184,8 +1241,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.selectedDomain = null;
   state.selectedMembers = [];
   state.adminAccounts = [];
-  state.adminArchiveAccountId = null;
-  state.adminArchiveState = null;
+  state.adminArchiveSelectedIds = new Set();
   state.activeTab = 'viewer';
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
@@ -1209,9 +1265,14 @@ els.tabEmailViewer.addEventListener('click', () => {
   renderAuthState();
 });
 
-els.tabAdminPanel.addEventListener('click', () => {
+els.tabAdminPanel.addEventListener('click', async () => {
   state.activeTab = 'admin';
   renderAuthState();
+  // Ensure accounts are loaded if switching to admin tab before openDomain completed.
+  if (!state.adminAccounts.length && state.domains.length) {
+    const domainId = state.selectedDomain ? state.selectedDomain.id : state.domains[0].id;
+    await loadAdminDomain(domainId).catch(() => {});
+  }
 });
 
 bootstrapFromToken();

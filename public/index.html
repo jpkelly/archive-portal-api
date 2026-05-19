@@ -160,15 +160,20 @@
           </div>
 
           <h4 class="admin-subhead">Archive Lifecycle Management</h4>
-          <p class="muted" style="font-size: 0.8rem; margin: 0 0 8px 0;">
-            Create account archives by date rule, verify archive artifacts in S3, then delete server-side messages for the same verified range.
+          <p class="muted" style="font-size: 0.8rem; margin: 0 0 10px 0;">
+            Select accounts, set a date rule, then Create → Verify → Delete Messages in sequence.
           </p>
-          <div class="admin-grid admin-archive-grid">
-            <label>
-              Account
-              <select id="adminArchiveAccountSelect"></select>
-            </label>
 
+          <div class="archive-account-header">
+            <span class="archive-account-header-label">Accounts</span>
+            <div class="archive-account-header-btns">
+              <button id="adminArchiveSelectAll" class="button ghost" type="button">Select All</button>
+              <button id="adminArchiveSelectNone" class="button ghost" type="button">Select None</button>
+            </div>
+          </div>
+          <div id="adminArchiveAccountList" class="archive-account-list"></div>
+
+          <div class="admin-grid admin-archive-grid" style="margin-top: 12px;">
             <label>
               Archive Mode
               <select id="adminArchiveMode">
@@ -191,20 +196,14 @@
               To Date
               <input id="adminArchiveToDate" type="date" />
             </label>
-
-            <div class="admin-actions">
-              <button id="adminArchiveStartBtn" class="button" type="button">Create Archive</button>
-            </div>
-
-            <div class="admin-actions">
-              <button id="adminArchiveVerifyBtn" class="button ghost" type="button">Verify Archive</button>
-            </div>
-
-            <div class="admin-actions">
-              <button id="adminDeleteMessagesBtn" class="button ghost" type="button">Delete Messages (Verified Only)</button>
-            </div>
           </div>
-          <div id="adminArchiveStatus" class="admin-archive-status muted">No archive operation selected.</div>
+
+          <div class="archive-actions-row">
+            <button id="adminArchiveStartBtn" class="button" type="button">Create Archive</button>
+            <button id="adminArchiveVerifyBtn" class="button ghost" type="button">Verify Archive</button>
+            <button id="adminDeleteMessagesBtn" class="button ghost" type="button">Delete Messages (Verified Only)</button>
+          </div>
+          <div id="adminArchiveStatus" class="admin-archive-status muted">No accounts selected.</div>
         </section>
 
       <p id="status" class="status"></p>
