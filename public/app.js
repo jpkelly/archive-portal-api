@@ -1222,24 +1222,33 @@ els.adminArchiveVerifyBtn.addEventListener('click', async () => {
     return;
   }
 
-  let succeeded = 0;
-  let failed = 0;
+  let verified = 0;
+  let skipped = 0;
+  let errors = 0;
   for (const accountId of selected) {
     const account = state.adminAccounts.find((a) => String(a.id) === accountId);
     const username = account ? account.username : accountId;
+    if (!account || !account.archive_state) {
+      skipped += 1;
+      continue;
+    }
     try {
       await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/verify`, {
         method: 'POST',
         body: JSON.stringify({}),
       });
-      succeeded += 1;
+      verified += 1;
     } catch (err) {
       setStatus(`Error verifying ${username}: ${err.message}`);
-      failed += 1;
+      errors += 1;
     }
   }
 
-  setStatus(`Verification complete: ${succeeded} succeeded, ${failed} failed.`, 'info');
+  const parts = [];
+  if (verified) parts.push(`${verified} verified`);
+  if (skipped) parts.push(`${skipped} skipped (no archive)`);
+  if (errors) parts.push(`${errors} error${errors !== 1 ? 's' : ''}`);
+  setStatus(`Verification complete: ${parts.join(' · ')}.`, 'info');
   await loadAdminDomain(state.selectedDomain.id);
 });
 
