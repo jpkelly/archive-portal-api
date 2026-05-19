@@ -334,9 +334,13 @@ async function loadAccounts(domainId) {
       bgColor = '#ffe6e6';
     }
     
-    btn.textContent = isSyncing
+    const label = isSyncing
       ? `${indicator} ${account.username} – Indexing…`
-      : `${indicator} ${account.username} (${msgCount} msgs)`;
+      : isIndexed && msgCount === 0
+        ? `${indicator} ${account.username} (empty)`
+        : `${indicator} ${account.username} (${msgCount} msgs)`;
+
+    btn.textContent = label;
     btn.style.backgroundColor = bgColor;
     btn.style.padding = '6px 10px';
     btn.style.borderRadius = '4px';
