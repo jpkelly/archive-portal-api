@@ -260,6 +260,7 @@ async function getLatestArchiveTimestamp() {
     ['s3', 'ls', 's3://smallgod-mail-archive/archive/'],
     { env: awsEnv, maxBuffer: 1024 * 1024 }
   );
+  console.log(`[getLatestArchiveTimestamp] raw stdout: ${JSON.stringify(stdout)}`);
 
   const timestamps = stdout
     .split('\n')
@@ -960,8 +961,10 @@ router.post('/:domainId/archive/discover', async (req, res) => {
     try {
       latestTimestamp = await getLatestArchiveTimestamp();
     } catch (err) {
+      console.error(`[discover] getLatestArchiveTimestamp threw: ${err.message}`);
       return res.status(500).json({ error: 'Could not list S3 archive runs', detail: err.message });
     }
+    console.log(`[discover] latestTimestamp="${latestTimestamp}"`);
 
     if (!latestTimestamp) {
       return res.json({ ok: true, discovered: 0, message: 'No archive runs found in S3' });
