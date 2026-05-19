@@ -1045,6 +1045,19 @@ function inferRangeFromS3Uri(s3Uri) {
   };
 }
 
+router.delete('/:domainId/accounts/:accountId/archive-state', async (req, res) => {
+  const { domainId, accountId } = req.params;
+  try {
+    if (!requireAdmin(req, res)) return;
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+    await query('DELETE FROM mail_account_archives WHERE account_id = ?', [accountId]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not reset archive state', detail: err.message });
+  }
+});
+
 router.post('/:domainId/archive/discover', async (req, res) => {
   const { domainId } = req.params;
   try {

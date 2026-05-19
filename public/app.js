@@ -72,6 +72,7 @@ const els = {
   adminArchiveVerifyBtn: document.getElementById('adminArchiveVerifyBtn'),
   adminDeleteMessagesBtn: document.getElementById('adminDeleteMessagesBtn'),
   adminArchiveDiscoverBtn: document.getElementById('adminArchiveDiscoverBtn'),
+  adminArchiveResetBtn: document.getElementById('adminArchiveResetBtn'),
   adminArchiveDiscoverAllBtn: document.getElementById('adminArchiveDiscoverAllBtn'),
   adminArchiveSummary: document.getElementById('adminArchiveSummary'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
@@ -1161,6 +1162,46 @@ els.adminArchiveDiscoverAllBtn.addEventListener('click', async () => {
   els.adminArchiveDiscoverAllBtn.disabled = false;
 });
 
+els.adminArchiveResetBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  const selected = Array.from(state.adminArchiveSelectedIds);
+  const withRecords = selected.filter((id) => {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+    return a && a.archive_state;
+  });
+  if (!withRecords.length) {
+    setStatus('None of the selected accounts have an archive record to reset.');
+    return;
+  }
+  const hasDeleted = withRecords.some((id) => {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+    return a && a.archive_state && a.archive_state.deletion_status === 'deleted';
+  });
+  const names = withRecords.map((id) => {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+    return a ? a.username : id;
+  });
+  let msg = `Reset archive records for ${withRecords.length} account${withRecords.length !== 1 ? 's' : ''}:\n${names.join(', ')}\n\nThis removes their records from the database only. S3 files are NOT deleted.`;
+  if (hasDeleted) {
+    msg += '\n\n\u26a0 Warning: some of these accounts have already had messages deleted.';
+  }
+  if (!confirm(msg)) return;
+  els.adminArchiveResetBtn.disabled = true;
+  let resetCount = 0;
+  for (const accountId of withRecords) {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === accountId);
+    try {
+      await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`, { method: 'DELETE' });
+      resetCount++;
+    } catch (err) {
+      setStatus(`Error resetting ${a ? a.username : accountId}: ${err.message}`);
+    }
+  }
+  setStatus(`Reset ${resetCount} archive record${resetCount !== 1 ? 's' : ''}.`, 'info');
+  await loadAdminDomain(state.selectedDomain.id);
+  els.adminArchiveResetBtn.disabled = false;
+});
+
 els.adminArchiveStartBtn.addEventListener('click', async () => {
   if (!state.selectedDomain) return;
   const selected = Array.from(state.adminArchiveSelectedIds);
@@ -1184,6 +1225,29 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
       setStatus('From Date and To Date are required for range mode.');
       return;
     }
+  }
+
+  // Conflict check: warn if any selected accounts already have archive records
+  const withExisting = selected.filter((id) => {
+    const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+    return a && a.archive_state;
+  });
+  if (withExisting.length) {
+    const alreadyDeleted = withExisting.filter((id) => {
+      const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+      return a.archive_state.deletion_status === 'deleted';
+    });
+    const lines = withExisting.map((id) => {
+      const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+      const del = a.archive_state.deletion_status === 'deleted' ? ' \u26a0 messages already deleted' : '';
+      return `\u2022 ${a.username} (${a.archive_state.range_label || 'unknown range'})${del}`;
+    }).join('\n');
+    let msg = `${withExisting.length} account${withExisting.length !== 1 ? 's' : ''} already have an archive record:\n${lines}\n\nProceeding will replace their records with the new date range. Old S3 files are NOT deleted.`;
+    if (alreadyDeleted.length) {
+      msg += `\n\n\u26a0 Warning: ${alreadyDeleted.length} account${alreadyDeleted.length !== 1 ? 's' : ''} have already had messages deleted \u2014 those messages cannot be re-archived.`;
+    }
+    msg += '\n\nContinue?';
+    if (!confirm(msg)) return;
   }
 
   els.adminArchiveStartBtn.disabled = true;
