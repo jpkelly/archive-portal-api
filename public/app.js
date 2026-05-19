@@ -18,6 +18,7 @@ const state = {
   adminAccounts: [],
   adminArchiveSelectedIds: new Set(),
   activeTab: 'viewer',
+  orphans: [],
 };
 
 const els = {
@@ -74,6 +75,7 @@ const els = {
   adminArchiveDiscoverBtn: document.getElementById('adminArchiveDiscoverBtn'),
   adminArchiveResetBtn: document.getElementById('adminArchiveResetBtn'),
   adminArchiveDiscoverAllBtn: document.getElementById('adminArchiveDiscoverAllBtn'),
+  adminArchivePruneBtn: document.getElementById('adminArchivePruneBtn'),
   adminArchiveSummary: document.getElementById('adminArchiveSummary'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
   portalTabs: document.getElementById('portalTabs'),
@@ -1150,9 +1152,22 @@ els.adminArchiveDiscoverAllBtn.addEventListener('click', async () => {
       .filter((d) => d.discovered > 0)
       .map((d) => `${d.domain}: ${d.discovered}`)
       .join(', ');
-    els.adminArchiveStatus.textContent =
+    let statusMsg =
       `Discovered ${result.discovered} archive${result.discovered !== 1 ? 's' : ''} across all domains` +
       (domainSummary ? ` (${domainSummary})` : '') + '.';
+    const orphans = result.orphans || [];
+    if (orphans.length > 0) {
+      statusMsg += ` ${orphans.length} orphaned S3 archive${orphans.length !== 1 ? 's' : ''} detected.`;
+      state.orphans = orphans;
+      els.adminArchivePruneBtn.disabled = false;
+      els.adminArchivePruneBtn.textContent = `Prune Orphans (${orphans.length})`;
+    } else {
+      statusMsg += ' No orphaned archives.';
+      state.orphans = [];
+      els.adminArchivePruneBtn.disabled = true;
+      els.adminArchivePruneBtn.textContent = 'Prune Orphans';
+    }
+    els.adminArchiveStatus.textContent = statusMsg;
     if (state.selectedDomain) {
       await loadAdminDomain(state.selectedDomain.id);
     }
@@ -1160,6 +1175,30 @@ els.adminArchiveDiscoverAllBtn.addEventListener('click', async () => {
     setStatus(`Discover all failed: ${err.message}`);
   }
   els.adminArchiveDiscoverAllBtn.disabled = false;
+});
+
+els.adminArchivePruneBtn.addEventListener('click', async () => {
+  const orphans = state.orphans || [];
+  if (!orphans.length) return;
+  const list = orphans
+    .map((o) => `• ${o.domain}/${o.username} [${o.timestamp}] (${(o.bytes / 1024 / 1024).toFixed(1)} MB)`)
+    .join('\n');
+  const msg =
+    `${orphans.length} orphaned S3 archive${orphans.length !== 1 ? 's' : ''} will be permanently deleted from S3:\n\n${list}\n\nThis cannot be undone. Proceed?`;
+  if (!confirm(msg)) return;
+  els.adminArchivePruneBtn.disabled = true;
+  els.adminArchiveStatus.textContent = 'Pruning orphaned archives from S3…';
+  try {
+    const result = await api('/domains/prune-orphans?confirm=true', { method: 'POST', body: JSON.stringify({}) });
+    els.adminArchiveStatus.textContent =
+      `Pruned ${result.pruned} orphaned archive${result.pruned !== 1 ? 's' : ''} from S3.` +
+      (result.errors && result.errors.length ? ` ${result.errors.length} error(s).` : '');
+    state.orphans = [];
+    els.adminArchivePruneBtn.textContent = 'Prune Orphans';
+  } catch (err) {
+    setStatus(`Prune failed: ${err.message}`);
+    els.adminArchivePruneBtn.disabled = false;
+  }
 });
 
 els.adminArchiveResetBtn.addEventListener('click', async () => {

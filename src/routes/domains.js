@@ -272,6 +272,48 @@ async function getLatestArchiveTimestamp() {
   return timestamps.length ? timestamps[timestamps.length - 1] : '';
 }
 
+async function findOrphanedArchives() {
+  const dbRows = await query(
+    `SELECT archive_s3_uri FROM mail_account_archives WHERE archive_s3_uri IS NOT NULL`
+  );
+  const knownUris = new Set(dbRows.map((r) => r.archive_s3_uri));
+
+  let s3All = '';
+  try {
+    const result = await execFileAsync(
+      '/usr/bin/aws',
+      ['s3', 'ls', '--recursive', 's3://smallgod-mail-archive/archive/'],
+      { env: awsEnv, maxBuffer: 8 * 1024 * 1024 }
+    );
+    s3All = result.stdout || '';
+  } catch (err) {
+    throw new Error(`S3 listing failed: ${err.message}`);
+  }
+
+  const orphans = [];
+  const seenPrefixes = new Set();
+  for (const line of s3All.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 4) continue;
+    const key = parts[3];
+    if (!key.endsWith('.tar.gz')) continue;
+    const uri = `s3://smallgod-mail-archive/${key}`;
+    if (!knownUris.has(uri)) {
+      const segments = key.split('/');
+      const [, timestamp, domain, username] = segments;
+      const bytes = parseInt(parts[2], 10) || 0;
+      const prefix = `s3://smallgod-mail-archive/archive/${timestamp}/${domain}/${username}/`;
+      if (!seenPrefixes.has(prefix)) {
+        seenPrefixes.add(prefix);
+        orphans.push({ uri, prefix, timestamp, domain, username, bytes });
+      }
+    }
+  }
+  return orphans;
+}
+
 async function findAccountArchivePath(domain, username) {
   const latestTimestamp = await getLatestArchiveTimestamp();
   if (!latestTimestamp) {
@@ -535,9 +577,54 @@ router.post('/discover-all', async (req, res) => {
       domainResults.push({ domain: domain.name, discovered: domainDiscovered, accounts: accounts.length });
     }
 
-    return res.json({ ok: true, discovered: totalDiscovered, domains: domainResults });
+    let orphans = [];
+    try {
+      orphans = await findOrphanedArchives();
+    } catch (orphanErr) {
+      console.error(`[discover-all] orphan detection failed: ${orphanErr.message}`);
+    }
+
+    return res.json({ ok: true, discovered: totalDiscovered, domains: domainResults, orphans });
   } catch (err) {
     return res.status(500).json({ error: 'Discover all failed', detail: err.message });
+  }
+});
+
+router.post('/prune-orphans', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const confirm = req.query.confirm === 'true';
+
+    let orphans = [];
+    try {
+      orphans = await findOrphanedArchives();
+    } catch (err) {
+      return res.status(500).json({ error: 'S3 listing failed', detail: err.message });
+    }
+
+    if (!confirm) {
+      return res.json({ ok: true, orphans, pruned: 0 });
+    }
+
+    let pruned = 0;
+    const errors = [];
+    for (const orphan of orphans) {
+      try {
+        await execFileAsync(
+          '/usr/bin/aws',
+          ['s3', 'rm', orphan.prefix, '--recursive', '--only-show-errors'],
+          { env: awsEnv, maxBuffer: 1024 * 1024 }
+        );
+        pruned++;
+      } catch (rmErr) {
+        errors.push({ prefix: orphan.prefix, error: rmErr.message });
+      }
+    }
+
+    return res.json({ ok: true, orphans, pruned, errors });
+  } catch (err) {
+    return res.status(500).json({ error: 'Prune orphans failed', detail: err.message });
   }
 });
 
