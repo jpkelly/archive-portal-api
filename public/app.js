@@ -371,7 +371,7 @@ async function loadAccounts(domainId) {
         
         try {
           const result = await api(`/domains/${domainId}/accounts/${account.id}/ingest`, {
-            method: 'POST',
+            method: 'GET',
           });
           if (result.ok) {
             setStatus(`Queued ingest for ${account.username}.`);
