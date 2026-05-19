@@ -272,6 +272,17 @@ async function getLatestArchiveTimestamp() {
   return timestamps.length ? timestamps[timestamps.length - 1] : '';
 }
 
+async function withConcurrency(tasks, limit) {
+  let i = 0;
+  async function worker() {
+    while (i < tasks.length) {
+      const task = tasks[i++];
+      await task();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+}
+
 async function findOrphanedArchives() {
   const dbRows = await query(
     `SELECT archive_s3_uri FROM mail_account_archives WHERE archive_s3_uri IS NOT NULL`
@@ -625,6 +636,187 @@ router.post('/prune-orphans', async (req, res) => {
     return res.json({ ok: true, orphans, pruned, errors });
   } catch (err) {
     return res.status(500).json({ error: 'Prune orphans failed', detail: err.message });
+  }
+});
+
+router.get('/archive-all/progress', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    const rows = await query(
+      `SELECT status, COUNT(*) AS cnt FROM mail_account_archives GROUP BY status`
+    );
+    const counts = {};
+    for (const r of rows) counts[r.status] = Number(r.cnt);
+    return res.json({ ok: true, counts });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch progress', detail: err.message });
+  }
+});
+
+router.post('/archive-all', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const normalized = normalizeArchiveRange(req.body || {});
+    if (normalized.error) {
+      return res.status(400).json({ error: normalized.error });
+    }
+
+    const skipExisting = (req.body || {}).skipExisting !== false;
+
+    const domains = await query(`SELECT d.id, d.name FROM domains d ORDER BY d.name ASC`);
+
+    const tasks = [];
+    let skipped = 0;
+
+    for (const domain of domains) {
+      const accounts = await query(
+        `SELECT a.id, a.username FROM mail_accounts a WHERE a.domain_id = ?`,
+        [domain.id]
+      );
+      for (const account of accounts) {
+        const existing = await getArchiveState(account.id);
+        if (existing && existing.status === 'running') { skipped++; continue; }
+        if (existing && existing.deletion_status === 'deleted') { skipped++; continue; }
+        if (skipExisting && existing && (existing.status === 'completed' || existing.status === 'completed_no_files')) {
+          skipped++;
+          continue;
+        }
+        const usernameLocal = String(account.username || '').split('@')[0];
+        const jobId = `archive_all_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        tasks.push({ accountId: account.id, domainName: domain.name, usernameLocal, jobId });
+      }
+    }
+
+    for (const t of tasks) {
+      await setArchiveState(t.accountId, {
+        job_id: t.jobId,
+        status: 'running',
+        verified: false,
+        verification_checked_at: null,
+        verification_message: 'Bulk archive job queued',
+        deletion_status: 'blocked',
+        deletion_message: 'Deletion is blocked until archive verification passes',
+        domain: t.domainName,
+        username: t.usernameLocal,
+        mode: normalized.mode,
+        beforeDate: normalized.beforeDate,
+        fromDate: normalized.fromDate,
+        toDate: normalized.toDate,
+        range_label: normalized.label,
+        requested_at: new Date().toISOString(),
+        completed_at: null,
+        deleted_at: null,
+        error: null,
+        archive_s3_uri: null,
+        archive_file_count: 0,
+        archive_source_bytes: 0,
+        archive_bytes: 0,
+        delete_count: null,
+      });
+    }
+
+    setImmediate(() => {
+      (async () => {
+        await withConcurrency(tasks.map((t) => async () => {
+          try {
+            const child = spawn(
+              'bash',
+              [
+                '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+                'archive',
+                t.domainName,
+                t.usernameLocal,
+                normalized.fromDate,
+                normalized.toDate,
+                normalized.mode,
+              ],
+              { env: awsEnv }
+            );
+
+            let stdout = '';
+            child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+
+            const exitCode = await new Promise((resolve, reject) => {
+              child.on('error', reject);
+              child.on('close', resolve);
+            });
+
+            const current = await getArchiveState(t.accountId);
+            if (!current || current.job_id !== t.jobId) return;
+
+            const parsed = parseKeyValueStdout(stdout);
+            if (exitCode !== 0) {
+              await setArchiveState(t.accountId, {
+                ...current,
+                status: 'failed',
+                verified: false,
+                verification_checked_at: new Date().toISOString(),
+                verification_message: 'Archive job failed',
+                completed_at: new Date().toISOString(),
+                error: parsed.ERROR || 'Archive script failed',
+              });
+              return;
+            }
+
+            if (String(parsed.STATUS || '') === 'no_files') {
+              await setArchiveState(t.accountId, {
+                ...current,
+                status: 'completed_no_files',
+                verified: true,
+                verification_checked_at: new Date().toISOString(),
+                verification_message: 'No matching files in this range',
+                deletion_status: 'ready',
+                deletion_message: 'No files matched; delete action is a no-op for this range',
+                completed_at: new Date().toISOString(),
+                archive_s3_uri: null,
+                archive_file_count: 0,
+                archive_source_bytes: 0,
+                archive_bytes: 0,
+                error: null,
+              });
+              return;
+            }
+
+            const s3Uri = parsed.ARCHIVE_S3_URI || null;
+            const verified = await verifyS3ObjectExists(s3Uri);
+            await setArchiveState(t.accountId, {
+              ...current,
+              status: 'completed',
+              verified,
+              verification_checked_at: new Date().toISOString(),
+              verification_message: verified ? 'Archive found in S3' : 'Archive upload completed but S3 verification failed',
+              deletion_status: verified ? 'ready' : 'blocked',
+              deletion_message: verified
+                ? 'Deletion is allowed for this verified range'
+                : 'Deletion is blocked until archive verification passes',
+              completed_at: new Date().toISOString(),
+              error: null,
+              archive_s3_uri: s3Uri,
+              archive_file_count: Number(parsed.FILE_COUNT || 0),
+              archive_source_bytes: Number(parsed.SOURCE_BYTES || 0),
+              archive_bytes: Number(parsed.ARCHIVE_BYTES || 0),
+            });
+          } catch (err) {
+            const current = await getArchiveState(t.accountId).catch(() => null);
+            if (!current || current.job_id !== t.jobId) return;
+            await setArchiveState(t.accountId, {
+              ...current,
+              status: 'failed',
+              verified: false,
+              verification_checked_at: new Date().toISOString(),
+              verification_message: 'Archive job failed to start',
+              completed_at: new Date().toISOString(),
+              error: err.message,
+            }).catch(() => {});
+          }
+        }), 4);
+      })().catch((err) => console.error('[archive-all] background error:', err.message));
+    });
+
+    return res.json({ ok: true, queued: tasks.length, skipped, label: normalized.label });
+  } catch (err) {
+    return res.status(500).json({ error: 'Archive all failed', detail: err.message });
   }
 });
 

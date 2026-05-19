@@ -209,6 +209,7 @@
             <button id="adminArchiveResetBtn" class="button ghost" type="button" title="Clear archive records for selected accounts from the database. S3 files are NOT deleted. Use before re-creating with a new date range.">Reset Selected</button>
             <button id="adminArchiveDiscoverAllBtn" class="button ghost" type="button" title="Scan S3 for existing archive files across every domain and register them in the database. Skips accounts that already have a record.">Scan All Domains</button>
             <button id="adminArchivePruneBtn" class="button ghost" type="button" disabled title="Permanently delete S3 archives that have no matching database record (orphans). Run Scan All Domains first to detect them.">Prune Orphans</button>
+            <button id="adminArchiveAllBtn" class="button ghost" type="button" title="Archive all accounts across all domains for the date range set above. Skips accounts that already have a completed archive.">Archive All Domains</button>
           </div>
           <div id="adminArchiveStatus" class="admin-archive-status muted">No accounts selected.</div>
         </section>

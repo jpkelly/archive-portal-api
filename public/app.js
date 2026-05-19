@@ -19,6 +19,7 @@ const state = {
   adminArchiveSelectedIds: new Set(),
   activeTab: 'viewer',
   orphans: [],
+  archiveAllPoll: null,
 };
 
 const els = {
@@ -76,6 +77,7 @@ const els = {
   adminArchiveResetBtn: document.getElementById('adminArchiveResetBtn'),
   adminArchiveDiscoverAllBtn: document.getElementById('adminArchiveDiscoverAllBtn'),
   adminArchivePruneBtn: document.getElementById('adminArchivePruneBtn'),
+  adminArchiveAllBtn: document.getElementById('adminArchiveAllBtn'),
   adminArchiveSummary: document.getElementById('adminArchiveSummary'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
   portalTabs: document.getElementById('portalTabs'),
@@ -1175,6 +1177,51 @@ els.adminArchiveDiscoverAllBtn.addEventListener('click', async () => {
     setStatus(`Discover all failed: ${err.message}`);
   }
   els.adminArchiveDiscoverAllBtn.disabled = false;
+});
+
+els.adminArchiveAllBtn.addEventListener('click', async () => {
+  const mode = els.adminArchiveMode.value;
+  const payload = { mode, skipExisting: true };
+  if (mode === 'before') {
+    payload.beforeDate = els.adminArchiveBeforeDate.value;
+    if (!payload.beforeDate) { setStatus('Before Date is required.'); return; }
+  } else {
+    payload.fromDate = els.adminArchiveFromDate.value;
+    payload.toDate = els.adminArchiveToDate.value;
+    if (!payload.fromDate || !payload.toDate) { setStatus('From Date and To Date are required.'); return; }
+  }
+  const rangeLabel = mode === 'before' ? `before ${payload.beforeDate}` : `${payload.fromDate} to ${payload.toDate}`;
+  const msg = `Archive ALL accounts across ALL domains for range: ${rangeLabel}\n\nAccounts that already have a completed archive will be skipped.\nUse Reset Selected first if you need to re-archive specific accounts.\n\nProceed?`;
+  if (!confirm(msg)) return;
+  els.adminArchiveAllBtn.disabled = true;
+  els.adminArchiveStatus.textContent = 'Queueing archive jobs across all domains…';
+  try {
+    const result = await api('/domains/archive-all', { method: 'POST', body: JSON.stringify(payload) });
+    els.adminArchiveStatus.textContent =
+      `Archive all queued: ${result.queued} accounts (${result.label}). ${result.skipped} skipped. Running — checking progress…`;
+    if (state.archiveAllPoll) clearInterval(state.archiveAllPoll);
+    state.archiveAllPoll = setInterval(async () => {
+      try {
+        const prog = await api('/domains/archive-all/progress');
+        const c = prog.counts || {};
+        const running = c.running || 0;
+        const completed = (c.completed || 0) + (c.completed_no_files || 0);
+        const failed = c.failed || 0;
+        els.adminArchiveStatus.textContent =
+          `Archive all: ${running} running · ${completed} completed · ${failed} failed`;
+        if (running === 0) {
+          clearInterval(state.archiveAllPoll);
+          state.archiveAllPoll = null;
+          els.adminArchiveAllBtn.disabled = false;
+          els.adminArchiveStatus.textContent =
+            `Archive all complete: ${completed} completed · ${failed} failed. Reload a domain to review.`;
+        }
+      } catch (_) {}
+    }, 5000);
+  } catch (err) {
+    setStatus(`Archive all failed: ${err.message}`);
+    els.adminArchiveAllBtn.disabled = false;
+  }
 });
 
 els.adminArchivePruneBtn.addEventListener('click', async () => {
