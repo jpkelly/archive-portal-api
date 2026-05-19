@@ -292,6 +292,35 @@ async function loadDomains() {
   );
 }
 
+let accountRefreshTimer = null;
+
+function stopAccountRefreshPolling() {
+  if (!accountRefreshTimer) return;
+  clearInterval(accountRefreshTimer);
+  accountRefreshTimer = null;
+}
+
+function startAccountRefreshPolling() {
+  if (accountRefreshTimer) return;
+  accountRefreshTimer = setInterval(async () => {
+    if (syncingAccounts.size === 0) {
+      stopAccountRefreshPolling();
+      return;
+    }
+
+    if (!state.domainId) return;
+
+    try {
+      await loadAccounts(state.domainId);
+      if (state.user && state.user.role === 'admin' && state.selectedDomain && state.selectedDomain.id === state.domainId) {
+        await loadAdminDomain(state.domainId);
+      }
+    } catch (_) {
+      // Keep polling; transient failures should not stop refreshes.
+    }
+  }, 5000);
+}
+
 async function queueReindexAllAccessibleAccounts() {
   if (!state.token || !state.domains.length) return;
 
@@ -315,7 +344,9 @@ async function queueReindexAllAccessibleAccounts() {
           method: 'GET',
         });
         if (result.ok) {
+          syncingAccounts.add(account.id);
           queued += 1;
+          startAccountRefreshPolling();
         } else if (result.error === 'No archives found in S3') {
           noArchive += 1;
         } else {
@@ -683,7 +714,12 @@ els.loginForm.addEventListener('submit', async (event) => {
     clearList(els.folderList, 'Select an account first.');
     resetMessageView('Select a folder first.');
     els.password.value = '';
-    await queueReindexAllAccessibleAccounts();
+    setStatus('Info: Logged in. Re-indexing is running in the background and counts will populate as processing completes.', 'info');
+    setTimeout(() => {
+      queueReindexAllAccessibleAccounts().catch((err) => {
+        setStatus(`Error: ${err.message}`);
+      });
+    }, 0);
   } catch (err) {
     setStatus(err.message);
   } finally {
@@ -839,6 +875,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.selectedDomain = null;
   state.selectedMembers = [];
   state.viewMode = 'plain';
+  stopAccountRefreshPolling();
   syncingAccounts.clear();
   setStatus('');
   renderAuthState();
