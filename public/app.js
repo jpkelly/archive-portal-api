@@ -295,10 +295,6 @@ async function loadDomains() {
       await openDomain(domain);
     }
   );
-
-  if (!state.domainId && state.domains.length) {
-    await openDomain(state.domains[0]);
-  }
 }
 
 let accountRefreshTimer = null;
@@ -333,6 +329,19 @@ function startAccountRefreshPolling() {
 async function queueReindexAllAccessibleAccounts() {
   if (!state.token || !state.domains.length) return;
 
+  await api('/auth/reset-usage', { method: 'POST' });
+
+  if (state.domainId) {
+    try {
+      await loadAccounts(state.domainId);
+      if (state.user && state.user.role === 'admin' && state.selectedDomain && state.selectedDomain.id === state.domainId) {
+        await loadAdminDomain(state.domainId);
+      }
+    } catch (_) {
+      // Keep going; per-account queueing below may still succeed.
+    }
+  }
+
   let queued = 0;
   let noArchive = 0;
   let failed = 0;
@@ -348,20 +357,23 @@ async function queueReindexAllAccessibleAccounts() {
     }
 
     for (const account of accounts) {
+      syncingAccounts.add(account.id);
       try {
         const result = await api(`/domains/${domain.id}/accounts/${account.id}/ingest`, {
           method: 'GET',
         });
         if (result.ok) {
-          syncingAccounts.add(account.id);
           queued += 1;
           startAccountRefreshPolling();
         } else if (result.error === 'No archives found in S3') {
+          syncingAccounts.delete(account.id);
           noArchive += 1;
         } else {
+          syncingAccounts.delete(account.id);
           failed += 1;
         }
       } catch (_) {
+        syncingAccounts.delete(account.id);
         failed += 1;
       }
     }
@@ -686,7 +698,11 @@ async function bootstrapFromToken() {
     state.user = me.user;
     renderAuthState();
     await loadDomains();
-    if (!state.domainId) {
+    if (state.domains.length) {
+      setTimeout(() => {
+        openDomain(state.domains[0]).catch(() => {});
+      }, 0);
+    } else if (!state.domainId) {
       clearList(els.accountList, 'Select a domain first.');
       clearList(els.folderList, 'Select an account first.');
       resetMessageView('Select a folder first.');
@@ -721,7 +737,11 @@ els.loginForm.addEventListener('submit', async (event) => {
     localStorage.setItem('archivePortalToken', data.token);
     renderAuthState();
     await loadDomains();
-    if (!state.domainId) {
+    if (state.domains.length) {
+      setTimeout(() => {
+        openDomain(state.domains[0]).catch(() => {});
+      }, 0);
+    } else if (!state.domainId) {
       clearList(els.accountList, 'Select a domain first.');
       clearList(els.folderList, 'Select an account first.');
       resetMessageView('Select a folder first.');

@@ -14,6 +14,33 @@ function tempArchiveRootDir() {
   return path.join(os.tmpdir(), 'archive-portal-cache');
 }
 
+async function resetUsageStatsForUser(userId, role) {
+  if (role === 'admin') {
+    await query('UPDATE folders SET message_count = 0, updated_at = NOW()');
+    await query('UPDATE mail_accounts SET message_count = 0, folder_count = 0, last_indexed_at = NULL, updated_at = NOW()');
+    return;
+  }
+
+  await query(
+    `UPDATE folders f
+     JOIN mail_accounts a ON a.id = f.account_id
+     JOIN domain_members dm ON dm.domain_id = a.domain_id
+     SET f.message_count = 0, f.updated_at = NOW()
+     WHERE dm.user_id = ?`,
+    [userId]
+  );
+  await query(
+    `UPDATE mail_accounts a
+     JOIN domain_members dm ON dm.domain_id = a.domain_id
+     SET a.message_count = 0,
+         a.folder_count = 0,
+         a.last_indexed_at = NULL,
+         a.updated_at = NOW()
+     WHERE dm.user_id = ?`,
+    [userId]
+  );
+}
+
 async function removeDirRecursive(dir) {
   if (typeof fs.promises.rm === 'function') {
     await fs.promises.rm(dir, { recursive: true, force: true });
@@ -103,33 +130,20 @@ router.post('/logout', requireAuth, async (req, res) => {
     await removeDirRecursive(tempArchiveRootDir());
 
     // Reset mail usage stats so a new login starts from a clean usage view.
-    if (role === 'admin') {
-      await query('UPDATE folders SET message_count = 0, updated_at = NOW()');
-      await query('UPDATE mail_accounts SET message_count = 0, folder_count = 0, last_indexed_at = NULL, updated_at = NOW()');
-    } else {
-      await query(
-        `UPDATE folders f
-         JOIN mail_accounts a ON a.id = f.account_id
-         JOIN domain_members dm ON dm.domain_id = a.domain_id
-         SET f.message_count = 0, f.updated_at = NOW()
-         WHERE dm.user_id = ?`,
-        [userId]
-      );
-      await query(
-        `UPDATE mail_accounts a
-         JOIN domain_members dm ON dm.domain_id = a.domain_id
-         SET a.message_count = 0,
-             a.folder_count = 0,
-             a.last_indexed_at = NULL,
-             a.updated_at = NOW()
-         WHERE dm.user_id = ?`,
-        [userId]
-      );
-    }
+    await resetUsageStatsForUser(userId, role);
 
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'Could not complete logout cleanup', detail: err.message });
+  }
+});
+
+router.post('/reset-usage', requireAuth, async (req, res) => {
+  try {
+    await resetUsageStatsForUser(req.auth.sub, req.auth.role);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not reset usage stats', detail: err.message });
   }
 });
 
