@@ -56,11 +56,22 @@ async function findAccountArchivePath(domain, username) {
   }
 
   const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain}/${username}/`;
-  const { stdout } = await execFileAsync(
-    '/usr/bin/aws',
-    ['s3', 'ls', prefix],
-    { env: awsEnv, maxBuffer: 1024 * 1024 }
-  );
+  let stdout = '';
+  try {
+    const result = await execFileAsync(
+      '/usr/bin/aws',
+      ['s3', 'ls', prefix],
+      { env: awsEnv, maxBuffer: 1024 * 1024 }
+    );
+    stdout = result.stdout || '';
+  } catch (err) {
+    const stderr = String((err && err.stderr) || '').trim();
+    // Some account prefixes return non-zero with no output. Treat as no archive.
+    if (!stderr) {
+      return null;
+    }
+    throw err;
+  }
 
   const tarball = stdout
     .split('\n')
