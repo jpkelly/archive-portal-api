@@ -292,6 +292,47 @@ async function loadDomains() {
   );
 }
 
+async function queueReindexAllAccessibleAccounts() {
+  if (!state.token || !state.domains.length) return;
+
+  let queued = 0;
+  let noArchive = 0;
+  let failed = 0;
+
+  for (const domain of state.domains) {
+    let accounts = [];
+    try {
+      const accountsData = await api(`/domains/${domain.id}/accounts`);
+      accounts = accountsData.accounts || [];
+    } catch (_) {
+      failed += 1;
+      continue;
+    }
+
+    for (const account of accounts) {
+      try {
+        const result = await api(`/domains/${domain.id}/accounts/${account.id}/ingest`, {
+          method: 'GET',
+        });
+        if (result.ok) {
+          queued += 1;
+        } else if (result.error === 'No archives found in S3') {
+          noArchive += 1;
+        } else {
+          failed += 1;
+        }
+      } catch (_) {
+        failed += 1;
+      }
+    }
+  }
+
+  setStatus(
+    `Info: Login re-index queued for ${queued} accounts (${noArchive} without archive, ${failed} failed).`,
+    'info'
+  );
+}
+
 const syncingAccounts = new Set();
 
 async function loadAccounts(domainId) {
@@ -642,6 +683,7 @@ els.loginForm.addEventListener('submit', async (event) => {
     clearList(els.folderList, 'Select an account first.');
     resetMessageView('Select a folder first.');
     els.password.value = '';
+    await queueReindexAllAccessibleAccounts();
   } catch (err) {
     setStatus(err.message);
   } finally {
@@ -788,8 +830,17 @@ els.logoutBtn.addEventListener('click', async () => {
   state.accountId = null;
   state.folderId = null;
   state.currentMessage = null;
+  state.messageOffset = 0;
+  state.messageTotal = 0;
+  state.messageQuery = '';
+  state.messageDateFrom = '';
+  state.messageDateTo = '';
+  state.domains = [];
   state.selectedDomain = null;
   state.selectedMembers = [];
+  state.viewMode = 'plain';
+  syncingAccounts.clear();
+  setStatus('');
   renderAuthState();
   clearList(els.domainList, 'Log in to load domains.');
   clearList(els.accountList, 'Select a domain first.');

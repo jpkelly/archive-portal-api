@@ -10,8 +10,8 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-function userTempArchiveDir(userId) {
-  return path.join(os.tmpdir(), 'archive-portal-cache', userId);
+function tempArchiveRootDir() {
+  return path.join(os.tmpdir(), 'archive-portal-cache');
 }
 
 async function removeDirRecursive(dir) {
@@ -96,8 +96,37 @@ router.get('/me', requireAuth, async (req, res) => {
 
 router.post('/logout', requireAuth, async (req, res) => {
   try {
-    const dir = userTempArchiveDir(req.auth.sub);
-    await removeDirRecursive(dir);
+    const userId = req.auth.sub;
+    const role = req.auth.role;
+
+    // Purge all temporary archives on logout.
+    await removeDirRecursive(tempArchiveRootDir());
+
+    // Reset mail usage stats so a new login starts from a clean usage view.
+    if (role === 'admin') {
+      await query('UPDATE folders SET message_count = 0, updated_at = NOW()');
+      await query('UPDATE mail_accounts SET message_count = 0, folder_count = 0, last_indexed_at = NULL, updated_at = NOW()');
+    } else {
+      await query(
+        `UPDATE folders f
+         JOIN mail_accounts a ON a.id = f.account_id
+         JOIN domain_members dm ON dm.domain_id = a.domain_id
+         SET f.message_count = 0, f.updated_at = NOW()
+         WHERE dm.user_id = ?`,
+        [userId]
+      );
+      await query(
+        `UPDATE mail_accounts a
+         JOIN domain_members dm ON dm.domain_id = a.domain_id
+         SET a.message_count = 0,
+             a.folder_count = 0,
+             a.last_indexed_at = NULL,
+             a.updated_at = NOW()
+         WHERE dm.user_id = ?`,
+        [userId]
+      );
+    }
+
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'Could not complete logout cleanup', detail: err.message });
