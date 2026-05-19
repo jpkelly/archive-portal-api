@@ -433,10 +433,13 @@ async function loadAccounts(domainId) {
     
     const isSelected = state.accountId === account.id;
     const indicatorPrefix = indicator ? `${indicator} ` : '';
+    const isIndexedEmpty = isIndexed && msgCount === 0;
     const label = isSyncing
       ? `${indicatorPrefix}${account.username} – Indexing…`
-      : msgCount === 0
+      : isIndexedEmpty
         ? `${indicatorPrefix}${account.username} (empty)`
+        : msgCount === 0
+          ? `${indicatorPrefix}${account.username}`
         : `${indicatorPrefix}${account.username} (${msgCount} msgs)`;
 
     btn.textContent = label;
