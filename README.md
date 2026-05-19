@@ -47,3 +47,7 @@ VALUES ('00000000-0000-0000-0000-000000000001', 'admin@smallgod.net', '$2a$12$re
 - This scaffold is read-only for archive browsing.
 - Ingestion worker is not implemented yet.
 - New records should include UUID strings in `id` columns from the app/worker.
+
+## Operations
+
+- Server access, deployment, PM2 restart, and resume workflow are documented in `SERVER_ACCESS_AND_DEPLOY_RUNBOOK.md`.
