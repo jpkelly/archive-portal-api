@@ -226,7 +226,13 @@ router.get('/:domainId/accounts', async (req, res) => {
       [domainId]
     );
 
-    return res.json({ accounts });
+    const enriched = accounts.map((a) => ({
+      ...a,
+      sync_status: a.last_indexed_at ? 'indexed' : 'not_indexed',
+      indexed_at: a.last_indexed_at || null,
+    }));
+
+    return res.json({ accounts: enriched });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch accounts', detail: err.message });
   }

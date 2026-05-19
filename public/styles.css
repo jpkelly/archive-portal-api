@@ -346,6 +346,26 @@ input {
   color: var(--muted);
 }
 
+.sync-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.sync-badge.indexed {
+  background: #e6f5e6;
+  color: #2d7d2d;
+}
+
+.sync-badge.not-indexed {
+  background: #fff3cd;
+  color: #856404;
+}
+
 .status {
   margin-top: 10px;
   min-height: 20px;

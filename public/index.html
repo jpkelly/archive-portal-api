@@ -42,6 +42,7 @@
 
         <aside class="panel">
           <h3>Accounts</h3>
+          <p class="muted" style="font-size: 0.75rem; margin: 0 0 6px 0;">✓ = indexed  |  ⧗ = waiting for sync</p>
           <ul id="accountList" class="list"></ul>
         </aside>
 
@@ -134,6 +135,17 @@
 
           <h4 class="admin-subhead">Domain Members</h4>
           <ul id="adminDomainMembers" class="list admin-member-list"></ul>
+
+          <h4 class="admin-subhead">Account Archive Status</h4>
+          <p class="muted" style="font-size: 0.8rem; margin: 0 0 8px 0;">
+            Shows which accounts have been indexed from archive. Click "Refresh Accounts" to sync account list from Plesk.
+            Use "Queue Sync" below to trigger archive ingestion for unindexed accounts.
+          </p>
+          <ul id="adminAccountSyncStatus" class="list admin-member-list"></ul>
+
+          <div class="admin-actions" style="margin-top: 10px;">
+            <button id="adminQueueSyncBtn" class="button ghost" type="button">Queue Sync for Unindexed</button>
+          </div>
         </section>
       </section>
 

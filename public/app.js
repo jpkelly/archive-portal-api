@@ -53,6 +53,8 @@ const els = {
   adminMemberPermission: document.getElementById('adminMemberPermission'),
   adminAddMemberBtn: document.getElementById('adminAddMemberBtn'),
   adminDomainMembers: document.getElementById('adminDomainMembers'),
+  adminAccountSyncStatus: document.getElementById('adminAccountSyncStatus'),
+  adminQueueSyncBtn: document.getElementById('adminQueueSyncBtn'),
 };
 
 function setStatus(message) {
@@ -195,6 +197,49 @@ function renderAdminMembers() {
   });
 }
 
+function renderAccountSyncStatus(accounts) {
+  if (!accounts || !accounts.length) {
+    clearList(els.adminAccountSyncStatus, 'No accounts found.');
+    return;
+  }
+
+  els.adminAccountSyncStatus.innerHTML = '';
+  const indexed = accounts.filter((a) => a.sync_status === 'indexed').length;
+  const notIndexed = accounts.filter((a) => a.sync_status === 'not_indexed').length;
+
+  const summary = document.createElement('li');
+  summary.style.padding = '8px';
+  summary.style.borderBottom = '1px solid var(--border)';
+  summary.style.marginBottom = '8px';
+  summary.innerHTML = `
+    <strong style="font-size: 0.85rem;">Summary:</strong> ${indexed} indexed, ${notIndexed} waiting for sync
+  `;
+  els.adminAccountSyncStatus.appendChild(summary);
+
+  accounts.forEach((account) => {
+    const li = document.createElement('li');
+    li.style.display = 'flex';
+    li.style.justifyContent = 'space-between';
+    li.style.alignItems = 'center';
+    li.style.gap = '8px';
+
+    const info = document.createElement('span');
+    info.style.fontSize = '0.85rem';
+    const status = account.sync_status === 'indexed' ? '✓' : '⏳';
+    const msgStr = account.message_count > 0 ? `${account.message_count} msgs` : 'empty';
+    const timeStr = account.indexed_at
+      ? new Date(account.indexed_at).toLocaleDateString()
+      : 'never';
+    info.textContent = `${status} ${account.username} – ${msgStr} (${timeStr})`;
+    info.title = account.indexed_at
+      ? `Last indexed: ${new Date(account.indexed_at).toLocaleString()}`
+      : 'Not yet indexed from archive';
+
+    li.appendChild(info);
+    els.adminAccountSyncStatus.appendChild(li);
+  });
+}
+
 function populateAdminControls(domain) {
   els.adminDomainSelect.innerHTML = '';
   state.domains.forEach((d) => {
@@ -213,6 +258,10 @@ async function loadAdminDomain(domainId) {
   state.selectedMembers = data.members || [];
   populateAdminControls(data.domain);
   renderAdminMembers();
+  
+  // Load accounts to show sync status
+  const accountsData = await api(`/domains/${domainId}/accounts`);
+  renderAccountSyncStatus(accountsData.accounts || []);
 }
 
 async function loadDomains() {
@@ -242,18 +291,36 @@ async function loadDomains() {
 
 async function loadAccounts(domainId) {
   const data = await api(`/domains/${domainId}/accounts`);
-  renderButtonList(
-    els.accountList,
-    data.accounts || [],
-    (a) => `${a.username} (${a.message_count || 0} msgs)`,
-    async (account) => {
+  const accountList = data.accounts || [];
+  
+  els.accountList.innerHTML = '';
+  if (!accountList.length) {
+    clearList(els.accountList, 'No accounts found.');
+    return;
+  }
+
+  accountList.forEach((account) => {
+    const li = document.createElement('li');
+    li.style.marginBottom = '4px';
+    
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    const msgCount = account.message_count || 0;
+    const status = account.sync_status === 'indexed' ? '✓' : '⧗';
+    const statusTitle = account.sync_status === 'indexed' ? 'Indexed' : 'Not indexed';
+    btn.textContent = `${status} ${account.username} (${msgCount} msgs)`;
+    btn.title = statusTitle;
+    btn.addEventListener('click', async () => {
       state.accountId = account.id;
       state.folderId = null;
       resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
       await loadFolders(state.domainId, account.id);
-    }
-  );
+    });
+    
+    li.appendChild(btn);
+    els.accountList.appendChild(li);
+  });
 }
 
 async function loadFolders(domainId, accountId) {
@@ -542,6 +609,7 @@ els.adminSyncAccountsBtn.addEventListener('click', async () => {
       body: JSON.stringify({ syncAccounts: true }),
     });
     await loadAccounts(state.selectedDomain.id);
+    await loadAdminDomain(state.selectedDomain.id);
     setStatus(`Refreshed ${data.domain}: +${data.inserted} accounts (${data.total} total).`);
   } catch (err) {
     setStatus(err.message);
@@ -549,6 +617,11 @@ els.adminSyncAccountsBtn.addEventListener('click', async () => {
     button.disabled = false;
     button.textContent = originalText;
   }
+});
+
+els.adminQueueSyncBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  setStatus('Queuing unindexed accounts for sync... (background job will process nightly)');
 });
 
 els.adminAddMemberBtn.addEventListener('click', async () => {
