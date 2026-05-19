@@ -967,6 +967,8 @@ router.post('/:domainId/archive/discover', async (req, res) => {
       return res.json({ ok: true, discovered: 0, message: 'No archive runs found in S3' });
     }
 
+    console.log(`[discover] domainId=${domainId} latestTimestamp=${latestTimestamp} accounts=${accounts.length}`);
+
     let discovered = 0;
     const results = [];
 
@@ -979,6 +981,7 @@ router.post('/:domainId/archive/discover', async (req, res) => {
 
       const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
       const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${account.domain_name}/${usernameLocal}/`;
+      console.log(`[discover] checking ${prefix}`);
       let s3Stdout = '';
       try {
         const s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
@@ -1044,6 +1047,7 @@ router.post('/:domainId/archive/discover', async (req, res) => {
       results.push({ username: account.username, status: 'discovered', s3_uri: s3Uri });
     }
 
+    console.log(`[discover] done: discovered=${discovered} results=${JSON.stringify(results)}`);
     return res.json({ ok: true, discovered, results });
   } catch (err) {
     return res.status(500).json({ error: 'Discover failed', detail: err.message });
