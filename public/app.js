@@ -71,6 +71,7 @@ const els = {
   adminArchiveStartBtn: document.getElementById('adminArchiveStartBtn'),
   adminArchiveVerifyBtn: document.getElementById('adminArchiveVerifyBtn'),
   adminDeleteMessagesBtn: document.getElementById('adminDeleteMessagesBtn'),
+  adminArchiveDiscoverBtn: document.getElementById('adminArchiveDiscoverBtn'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
   portalTabs: document.getElementById('portalTabs'),
   tabEmailViewer: document.getElementById('tabEmailViewer'),
@@ -1016,6 +1017,24 @@ els.adminArchiveSelectAll.addEventListener('click', () => {
 els.adminArchiveSelectNone.addEventListener('click', () => {
   state.adminArchiveSelectedIds.clear();
   renderArchiveAccountTable(state.adminAccounts);
+});
+
+els.adminArchiveDiscoverBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain) return;
+  els.adminArchiveDiscoverBtn.disabled = true;
+  els.adminArchiveStatus.textContent = 'Scanning S3 for existing archives…';
+  try {
+    const result = await api(`/domains/${state.selectedDomain.id}/archive/discover`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    els.adminArchiveStatus.textContent =
+      `Discovered ${result.discovered} archive${result.discovered !== 1 ? 's' : ''} from S3.`;
+    await loadAdminDomain(state.selectedDomain.id);
+  } catch (err) {
+    setStatus(`Discover failed: ${err.message}`);
+  }
+  els.adminArchiveDiscoverBtn.disabled = false;
 });
 
 els.adminArchiveStartBtn.addEventListener('click', async () => {
