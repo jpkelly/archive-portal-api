@@ -392,6 +392,12 @@ input {
   margin-top: 12px;
 }
 
+.archive-actions-bulk {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
 .admin-member-list {
   max-height: 220px;
 }

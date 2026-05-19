@@ -396,6 +396,9 @@ async function loadAdminDomain(domainId) {
   state.adminAccounts = accountsData.accounts || [];
   renderAccountSyncStatus(state.adminAccounts);
   renderArchiveAccountTable(state.adminAccounts);
+  if (data.domain && data.domain.name) {
+    els.adminArchiveDiscoverBtn.textContent = `Scan ${data.domain.name}`;
+  }
 }
 
 async function openDomain(domain) {
