@@ -308,7 +308,7 @@ async function loadAccounts(domainId) {
     // Main account button
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.style.flex = '1';
+    btn.style.flex = '1 1 auto';
     btn.style.minWidth = '0';
     btn.style.textAlign = 'left';
     btn.style.overflow = 'hidden';
@@ -356,8 +356,8 @@ async function loadAccounts(domainId) {
       const refreshBtn = document.createElement('button');
       refreshBtn.type = 'button';
       refreshBtn.className = 'button ghost';
-      refreshBtn.textContent = isIndexed ? '↻' : 'Sync';
-      refreshBtn.style.cssText = 'flex-shrink:0;font-size:0.72rem;padding:3px 7px;line-height:1.2;';
+      refreshBtn.textContent = '↻';
+      refreshBtn.style.cssText = 'flex:0 0 auto;font-size:0.8rem;padding:2px 5px;line-height:1;border-radius:999px;min-width:1.7rem;';
       refreshBtn.title = isIndexed ? 'Re-sync archive' : 'Trigger archive ingest';
       
       refreshBtn.addEventListener('click', async (e) => {

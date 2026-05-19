@@ -94,6 +94,11 @@ input {
   color: #2a3a4e;
 }
 
+.list button.button.ghost {
+  min-width: 0;
+  white-space: nowrap;
+}
+
 .portal {
   margin-top: 18px;
   display: grid;
