@@ -431,6 +431,7 @@ async function loadAccounts(domainId) {
       bgColor = '#ffe6e6';
     }
     
+    const isSelected = state.accountId === account.id;
     const selectedPrefix = isSelected ? '▶ ' : '';
     const label = isSyncing
       ? `${selectedPrefix}${indicator} ${account.username} – Indexing…`
@@ -442,7 +443,6 @@ async function loadAccounts(domainId) {
     btn.style.backgroundColor = bgColor;
     btn.style.padding = '6px 10px';
     btn.style.borderRadius = '4px';
-    const isSelected = state.accountId === account.id;
     btn.classList.toggle('selected', isSelected);
     btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     btn.title = isIndexed ? 'Indexed' : (isSyncing ? 'Indexing in progress' : 'Not indexed');
