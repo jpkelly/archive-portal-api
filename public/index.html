@@ -34,6 +34,11 @@
         </form>
       </section>
 
+      <nav id="portalTabs" class="portal-tabs hidden">
+        <button id="tabEmailViewer" class="tab-btn active" type="button">Email Viewer</button>
+        <button id="tabAdminPanel" class="tab-btn" type="button">Archive Administration</button>
+      </nav>
+
       <section id="portal" class="portal hidden">
         <aside class="panel">
           <h3>Domains</h3>
@@ -91,7 +96,9 @@
           <div id="messageDetailEmail" class="email-view hidden"></div>
         </section>
 
-        <section id="adminPanel" class="panel wide hidden">
+      </section>
+
+      <section id="adminPanel" class="panel portal-admin-pane hidden">
           <div class="detail-header">
             <h3>Domain Management</h3>
             <p class="muted admin-note">Master Admin controls for status and access.</p>
@@ -151,8 +158,54 @@
           <div class="admin-actions" style="margin-top: 10px;">
             <button id="adminQueueSyncBtn" class="button ghost" type="button">Queue Sync for Unindexed</button>
           </div>
+
+          <h4 class="admin-subhead">Archive Lifecycle Management</h4>
+          <p class="muted" style="font-size: 0.8rem; margin: 0 0 8px 0;">
+            Create account archives by date rule, verify archive artifacts in S3, then delete server-side messages for the same verified range.
+          </p>
+          <div class="admin-grid admin-archive-grid">
+            <label>
+              Account
+              <select id="adminArchiveAccountSelect"></select>
+            </label>
+
+            <label>
+              Archive Mode
+              <select id="adminArchiveMode">
+                <option value="before">Before Date</option>
+                <option value="range">Date Range</option>
+              </select>
+            </label>
+
+            <label id="adminArchiveBeforeWrap">
+              Before Date
+              <input id="adminArchiveBeforeDate" type="date" />
+            </label>
+
+            <label id="adminArchiveFromWrap" class="hidden">
+              From Date
+              <input id="adminArchiveFromDate" type="date" />
+            </label>
+
+            <label id="adminArchiveToWrap" class="hidden">
+              To Date
+              <input id="adminArchiveToDate" type="date" />
+            </label>
+
+            <div class="admin-actions">
+              <button id="adminArchiveStartBtn" class="button" type="button">Create Archive</button>
+            </div>
+
+            <div class="admin-actions">
+              <button id="adminArchiveVerifyBtn" class="button ghost" type="button">Verify Archive</button>
+            </div>
+
+            <div class="admin-actions">
+              <button id="adminDeleteMessagesBtn" class="button ghost" type="button">Delete Messages (Verified Only)</button>
+            </div>
+          </div>
+          <div id="adminArchiveStatus" class="admin-archive-status muted">No archive operation selected.</div>
         </section>
-      </section>
 
       <p id="status" class="status"></p>
     </main>

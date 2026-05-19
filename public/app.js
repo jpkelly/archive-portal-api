@@ -15,6 +15,10 @@ const state = {
   domains: [],
   selectedDomain: null,
   selectedMembers: [],
+  adminAccounts: [],
+  adminArchiveAccountId: null,
+  adminArchiveState: null,
+  activeTab: 'viewer',
 };
 
 const els = {
@@ -55,6 +59,21 @@ const els = {
   adminDomainMembers: document.getElementById('adminDomainMembers'),
   adminAccountSyncStatus: document.getElementById('adminAccountSyncStatus'),
   adminQueueSyncBtn: document.getElementById('adminQueueSyncBtn'),
+  adminArchiveAccountSelect: document.getElementById('adminArchiveAccountSelect'),
+  adminArchiveMode: document.getElementById('adminArchiveMode'),
+  adminArchiveBeforeWrap: document.getElementById('adminArchiveBeforeWrap'),
+  adminArchiveBeforeDate: document.getElementById('adminArchiveBeforeDate'),
+  adminArchiveFromWrap: document.getElementById('adminArchiveFromWrap'),
+  adminArchiveFromDate: document.getElementById('adminArchiveFromDate'),
+  adminArchiveToWrap: document.getElementById('adminArchiveToWrap'),
+  adminArchiveToDate: document.getElementById('adminArchiveToDate'),
+  adminArchiveStartBtn: document.getElementById('adminArchiveStartBtn'),
+  adminArchiveVerifyBtn: document.getElementById('adminArchiveVerifyBtn'),
+  adminDeleteMessagesBtn: document.getElementById('adminDeleteMessagesBtn'),
+  adminArchiveStatus: document.getElementById('adminArchiveStatus'),
+  portalTabs: document.getElementById('portalTabs'),
+  tabEmailViewer: document.getElementById('tabEmailViewer'),
+  tabAdminPanel: document.getElementById('tabAdminPanel'),
 };
 
 function setStatus(message, level = 'error') {
@@ -153,10 +172,23 @@ async function api(path, options = {}) {
 
 function renderAuthState() {
   const isLoggedIn = Boolean(state.token);
+  const isAdmin = Boolean(state.user && state.user.role === 'admin');
   els.loginCard.classList.toggle('hidden', isLoggedIn);
-  els.portal.classList.toggle('hidden', !isLoggedIn);
   els.logoutBtn.classList.toggle('hidden', !isLoggedIn);
-  els.adminPanel.classList.toggle('hidden', !(state.user && state.user.role === 'admin'));
+  els.portalTabs.classList.toggle('hidden', !(isLoggedIn && isAdmin));
+  if (!isLoggedIn) {
+    els.portal.classList.add('hidden');
+    els.adminPanel.classList.add('hidden');
+  } else if (!isAdmin) {
+    els.portal.classList.remove('hidden');
+    els.adminPanel.classList.add('hidden');
+  } else {
+    const showAdmin = state.activeTab === 'admin';
+    els.portal.classList.toggle('hidden', showAdmin);
+    els.adminPanel.classList.toggle('hidden', !showAdmin);
+    els.tabEmailViewer.classList.toggle('active', !showAdmin);
+    els.tabAdminPanel.classList.toggle('active', showAdmin);
+  }
   if (state.user) {
     const primary = state.user.primary_email || state.user.email;
     const login = state.user.primary_email && state.user.primary_email !== state.user.email
@@ -233,7 +265,11 @@ function renderAccountSyncStatus(accounts) {
     const timeStr = account.indexed_at
       ? new Date(account.indexed_at).toLocaleDateString()
       : 'never';
-    info.textContent = `${status} ${account.username} – ${msgStr} (${timeStr})`;
+    const archive = account.archive_state;
+    const archiveStr = archive
+      ? (archive.verified ? ' | archive: verified' : ` | archive: ${archive.status || 'pending'}`)
+      : ' | archive: none';
+    info.textContent = `${status} ${account.username} – ${msgStr} (${timeStr})${archiveStr}`;
     info.title = account.indexed_at
       ? `Last indexed: ${new Date(account.indexed_at).toLocaleString()}`
       : 'Not yet indexed from archive';
@@ -241,6 +277,83 @@ function renderAccountSyncStatus(accounts) {
     li.appendChild(info);
     els.adminAccountSyncStatus.appendChild(li);
   });
+}
+
+function getSelectedAdminArchiveAccount() {
+  if (!state.adminArchiveAccountId) return null;
+  return state.adminAccounts.find((a) => a.id === state.adminArchiveAccountId) || null;
+}
+
+function renderArchiveState() {
+  const account = getSelectedAdminArchiveAccount();
+  if (!account) {
+    els.adminArchiveStatus.textContent = 'No account selected for archive lifecycle actions.';
+    els.adminDeleteMessagesBtn.disabled = true;
+    return;
+  }
+
+  const s = state.adminArchiveState;
+  if (!s) {
+    els.adminArchiveStatus.textContent = `No archive operation found for ${account.username}.`;
+    els.adminDeleteMessagesBtn.disabled = true;
+    return;
+  }
+
+  const verified = s.verified ? 'Verified' : 'Not verified';
+  const verifyMark = s.verified ? 'OK' : 'PENDING';
+  const archiveLocation = s.archive_s3_uri ? ` | S3: ${s.archive_s3_uri}` : '';
+  const deleteMsg = s.deletion_message ? ` | Delete: ${s.deletion_message}` : '';
+  const rangeText = s.range_label || (s.mode === 'before' ? `before ${s.beforeDate}` : `${s.fromDate} to ${s.toDate}`);
+  els.adminArchiveStatus.textContent = [
+    `${account.username}`,
+    `Range: ${rangeText}`,
+    `Status: ${s.status}`,
+    `Verification: ${verified} (${verifyMark})`,
+    s.archive_file_count ? `Files: ${s.archive_file_count}` : null,
+    s.delete_count !== null && typeof s.delete_count !== 'undefined' ? `Deleted: ${s.delete_count}` : null,
+    s.error ? `Error: ${s.error}` : null,
+  ].filter(Boolean).join(' | ') + archiveLocation + deleteMsg;
+
+  els.adminDeleteMessagesBtn.disabled = !(s.verified && s.status !== 'running');
+}
+
+function applyArchiveModeVisibility() {
+  const mode = els.adminArchiveMode.value;
+  const isBefore = mode === 'before';
+  els.adminArchiveBeforeWrap.classList.toggle('hidden', !isBefore);
+  els.adminArchiveFromWrap.classList.toggle('hidden', isBefore);
+  els.adminArchiveToWrap.classList.toggle('hidden', isBefore);
+}
+
+function populateAdminArchiveAccounts(accounts) {
+  els.adminArchiveAccountSelect.innerHTML = '';
+  (accounts || []).forEach((account) => {
+    const opt = document.createElement('option');
+    opt.value = account.id;
+    opt.textContent = account.username;
+    if (state.adminArchiveAccountId === account.id) {
+      opt.selected = true;
+    }
+    els.adminArchiveAccountSelect.appendChild(opt);
+  });
+
+  if (!state.adminArchiveAccountId && accounts && accounts.length) {
+    state.adminArchiveAccountId = accounts[0].id;
+  }
+  if (state.adminArchiveAccountId) {
+    els.adminArchiveAccountSelect.value = state.adminArchiveAccountId;
+  }
+}
+
+async function loadAdminArchiveState(accountId) {
+  if (!state.selectedDomain || !accountId) {
+    state.adminArchiveState = null;
+    renderArchiveState();
+    return;
+  }
+  const data = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`);
+  state.adminArchiveState = data.archive || null;
+  renderArchiveState();
 }
 
 function populateAdminControls(domain) {
@@ -264,7 +377,15 @@ async function loadAdminDomain(domainId) {
   
   // Load accounts to show sync status
   const accountsData = await api(`/domains/${domainId}/accounts`);
-  renderAccountSyncStatus(accountsData.accounts || []);
+  state.adminAccounts = accountsData.accounts || [];
+  renderAccountSyncStatus(state.adminAccounts);
+  populateAdminArchiveAccounts(state.adminAccounts);
+  if (state.adminArchiveAccountId) {
+    await loadAdminArchiveState(state.adminArchiveAccountId);
+  } else {
+    state.adminArchiveState = null;
+    renderArchiveState();
+  }
 }
 
 async function openDomain(domain) {
@@ -875,6 +996,109 @@ els.adminQueueSyncBtn.addEventListener('click', async () => {
   setStatus('Queuing unindexed accounts for sync... (background job will process nightly)');
 });
 
+els.adminArchiveMode.addEventListener('change', () => {
+  applyArchiveModeVisibility();
+});
+
+els.adminArchiveAccountSelect.addEventListener('change', async () => {
+  state.adminArchiveAccountId = els.adminArchiveAccountSelect.value || null;
+  await loadAdminArchiveState(state.adminArchiveAccountId);
+});
+
+els.adminArchiveStartBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain || !state.adminArchiveAccountId) return;
+
+  const mode = els.adminArchiveMode.value;
+  const payload = { mode };
+  if (mode === 'before') {
+    payload.beforeDate = els.adminArchiveBeforeDate.value;
+    if (!payload.beforeDate) {
+      setStatus('before date is required for before mode');
+      return;
+    }
+  } else {
+    payload.fromDate = els.adminArchiveFromDate.value;
+    payload.toDate = els.adminArchiveToDate.value;
+    if (!payload.fromDate || !payload.toDate) {
+      setStatus('from and to dates are required for range mode');
+      return;
+    }
+  }
+
+  els.adminArchiveStartBtn.disabled = true;
+  try {
+    const data = await api(`/domains/${state.selectedDomain.id}/accounts/${state.adminArchiveAccountId}/archive/create`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    setStatus(data.message || 'Archive job started.', 'info');
+    await loadAdminArchiveState(state.adminArchiveAccountId);
+
+    // Poll while the archive job is running.
+    let guard = 0;
+    while (guard < 80) {
+      guard += 1;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await loadAdminArchiveState(state.adminArchiveAccountId);
+      if (!state.adminArchiveState || state.adminArchiveState.status !== 'running') {
+        break;
+      }
+    }
+
+    await loadAdminDomain(state.selectedDomain.id);
+  } catch (err) {
+    setStatus(err.message);
+  } finally {
+    els.adminArchiveStartBtn.disabled = false;
+  }
+});
+
+els.adminArchiveVerifyBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain || !state.adminArchiveAccountId) return;
+  try {
+    await api(`/domains/${state.selectedDomain.id}/accounts/${state.adminArchiveAccountId}/archive/verify`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    await loadAdminArchiveState(state.adminArchiveAccountId);
+    await loadAdminDomain(state.selectedDomain.id);
+    setStatus('Archive verification completed.', 'info');
+  } catch (err) {
+    setStatus(err.message);
+  }
+});
+
+els.adminDeleteMessagesBtn.addEventListener('click', async () => {
+  if (!state.selectedDomain || !state.adminArchiveAccountId) return;
+  if (!state.adminArchiveState || !state.adminArchiveState.verified) {
+    setStatus('Deletion is blocked until archive verification passes.');
+    return;
+  }
+
+  const account = getSelectedAdminArchiveAccount();
+  if (!account) return;
+
+  const rangeLabel = state.adminArchiveState.range_label || `${state.adminArchiveState.fromDate} to ${state.adminArchiveState.toDate}`;
+  const ok = window.confirm(`Delete server-side messages for ${account.username} in range ${rangeLabel}? This cannot be undone.`);
+  if (!ok) return;
+
+  els.adminDeleteMessagesBtn.disabled = true;
+  try {
+    const data = await api(`/domains/${state.selectedDomain.id}/accounts/${state.adminArchiveAccountId}/archive/delete-messages`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    setStatus(`Deleted ${data.deleted_count} server-side files for ${account.username}.`, 'info');
+    await loadAdminArchiveState(state.adminArchiveAccountId);
+    await loadAdminDomain(state.selectedDomain.id);
+    await loadAccounts(state.selectedDomain.id);
+  } catch (err) {
+    setStatus(err.message);
+  } finally {
+    els.adminDeleteMessagesBtn.disabled = false;
+  }
+});
+
 els.adminAddMemberBtn.addEventListener('click', async () => {
   if (!state.selectedDomain) return;
   const email = els.adminMemberEmail.value.trim();
@@ -959,6 +1183,10 @@ els.logoutBtn.addEventListener('click', async () => {
   state.domains = [];
   state.selectedDomain = null;
   state.selectedMembers = [];
+  state.adminAccounts = [];
+  state.adminArchiveAccountId = null;
+  state.adminArchiveState = null;
+  state.activeTab = 'viewer';
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
   syncingAccounts.clear();
@@ -976,4 +1204,15 @@ els.logoutBtn.addEventListener('click', async () => {
   els.viewToggle.classList.add('hidden');
 });
 
+els.tabEmailViewer.addEventListener('click', () => {
+  state.activeTab = 'viewer';
+  renderAuthState();
+});
+
+els.tabAdminPanel.addEventListener('click', () => {
+  state.activeTab = 'admin';
+  renderAuthState();
+});
+
 bootstrapFromToken();
+applyArchiveModeVisibility();

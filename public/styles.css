@@ -99,11 +99,48 @@ input {
   white-space: nowrap;
 }
 
+.portal-tabs {
+  display: flex;
+  margin-top: 18px;
+  border-bottom: 2px solid var(--border);
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  padding: 10px 20px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted);
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.portal-admin-pane {
+  margin-top: 12px;
+  min-height: 0;
+}
+
 .portal {
   margin-top: 18px;
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.portal-tabs:not(.hidden) + .portal {
+  margin-top: 4px;
 }
 
 .panel {
@@ -247,6 +284,21 @@ input {
 
 .admin-subhead {
   margin: 14px 0 8px;
+}
+
+.admin-archive-grid {
+  margin-top: 6px;
+}
+
+.admin-archive-status {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .admin-member-list {
