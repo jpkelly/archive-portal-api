@@ -26,6 +26,13 @@ from email.parser import BytesParser
 from email.utils import parsedate_to_datetime, parseaddr, getaddresses
 
 
+AWS_ENV = os.environ.copy()
+AWS_ENV.setdefault('HOME', '/home/centos')
+AWS_ENV.setdefault('AWS_CONFIG_FILE', '/home/centos/.aws/config')
+AWS_ENV.setdefault('AWS_SHARED_CREDENTIALS_FILE', '/home/centos/.aws/credentials')
+AWS_BIN = '/usr/bin/aws'
+
+
 def die(msg):
     print('ERROR: ' + msg, file=sys.stderr)
     sys.exit(1)
@@ -261,8 +268,11 @@ def ingest_from_s3(s3_path, domain, username):
     try:
         tar_local = os.path.join(work, 'archive.tar.gz')
         print('Downloading %s ...' % s3_path)
-        subprocess.check_call(['aws', 's3', 'cp', s3_path, tar_local],
-                              stdout=subprocess.DEVNULL)
+        subprocess.check_call(
+            [AWS_BIN, 's3', 'cp', s3_path, tar_local],
+            stdout=subprocess.DEVNULL,
+            env=AWS_ENV,
+        )
 
         print('Parsing messages ...')
         records = []
