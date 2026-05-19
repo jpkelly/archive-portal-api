@@ -301,15 +301,45 @@ async function loadAccounts(domainId) {
 
   accountList.forEach((account) => {
     const li = document.createElement('li');
-    li.style.marginBottom = '4px';
+    li.style.marginBottom = '6px';
+    li.style.display = 'flex';
+    li.style.justifyContent = 'space-between';
+    li.style.alignItems = 'center';
+    li.style.gap = '8px';
     
+    // Main account button
     const btn = document.createElement('button');
     btn.type = 'button';
+    btn.style.flex = '1';
+    btn.style.textAlign = 'left';
+    
     const msgCount = account.message_count || 0;
-    const status = account.sync_status === 'indexed' ? '✓' : '⧗';
-    const statusTitle = account.sync_status === 'indexed' ? 'Indexed' : 'Not indexed';
-    btn.textContent = `${status} ${account.username} (${msgCount} msgs)`;
-    btn.title = statusTitle;
+    const isIndexed = account.sync_status === 'indexed';
+    const hasMessages = msgCount > 0;
+    
+    // Color indicator and text
+    let indicator = '';
+    let bgColor = '';
+    
+    if (isIndexed && hasMessages) {
+      indicator = '🟢';
+      bgColor = '#e6f5e6';
+    } else if (isIndexed && !hasMessages) {
+      indicator = '🟡';
+      bgColor = '#fff3cd';
+    } else {
+      indicator = '🔴';
+      bgColor = '#ffe6e6';
+    }
+    
+    btn.textContent = `${indicator} ${account.username} (${msgCount} msgs)`;
+    btn.style.backgroundColor = bgColor;
+    btn.style.padding = '8px 12px';
+    btn.style.borderRadius = '4px';
+    btn.title = isIndexed 
+      ? (hasMessages ? 'Indexed with messages' : 'Indexed but empty')
+      : 'Not yet indexed - click refresh to ingest';
+    
     btn.addEventListener('click', async () => {
       state.accountId = account.id;
       state.folderId = null;
@@ -318,10 +348,52 @@ async function loadAccounts(domainId) {
       await loadFolders(state.domainId, account.id);
     });
     
-    li.appendChild(btn);
+    // Refresh button
+    if (!isIndexed || state.user?.role === 'admin') {
+      const refreshBtn = document.createElement('button');
+      refreshBtn.type = 'button';
+      refreshBtn.className = 'button ghost';
+      refreshBtn.textContent = isIndexed ? '↻' : 'Sync';
+      refreshBtn.style.padding = '6px 10px';
+      refreshBtn.style.fontSize = '0.85rem';
+      refreshBtn.title = isIndexed ? 'Re-sync archive' : 'Trigger archive ingest';
+      
+      refreshBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        refreshBtn.disabled = true;
+        const originalText = refreshBtn.textContent;
+        refreshBtn.textContent = '⏳';
+        
+        try {
+          const result = await api(`/domains/${domainId}/accounts/${account.id}/ingest`, {
+            method: 'POST',
+          });
+          
+          if (result.ok) {
+            setStatus(`Queued ingest for ${account.username}. Check back in a few moments.`);
+            // Reload accounts after a delay to show updated status
+            setTimeout(() => loadAccounts(domainId), 3000);
+          } else {
+            setStatus(`Error: ${result.error || 'Could not queue ingest'}`);
+          }
+        } catch (err) {
+          setStatus(`Error: ${err.message}`);
+        } finally {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = originalText;
+        }
+      });
+      
+      li.appendChild(btn);
+      li.appendChild(refreshBtn);
+    } else {
+      li.appendChild(btn);
+    }
+    
     els.accountList.appendChild(li);
   });
 }
+
 
 async function loadFolders(domainId, accountId) {
   const data = await api(`/domains/${domainId}/accounts/${accountId}/folders`);

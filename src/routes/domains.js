@@ -260,4 +260,64 @@ router.get('/:domainId/accounts/:accountId/folders', async (req, res) => {
   }
 });
 
+router.post('/:domainId/accounts/:accountId/ingest', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const account = await query(
+      'SELECT a.username, d.name FROM mail_accounts a JOIN domains d ON d.id=a.domain_id WHERE a.id=? AND d.id=? LIMIT 1',
+      [accountId, domainId]
+    );
+
+    if (!account.length) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const [user] = account;
+    const domain = user.name;
+    const username = user.username.split('@')[0];
+
+    const { stdout } = await execFileAsync('sh', ['-c', `
+      aws s3 ls s3://smallgod-mail-archive/archive/ --recursive | tail -n 1 | awk '{print $NF}' | sed 's#.*archive/##;s#/.*##'
+    `]);
+
+    const latestTimestamp = stdout.trim();
+    if (!latestTimestamp) {
+      return res.json({ 
+        ok: false, 
+        error: 'No archives found in S3',
+        account_id: accountId 
+      });
+    }
+
+    const s3Path = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain}/${username}/${domain}_${username}_pre2025_${latestTimestamp}.tar.gz`;
+
+    // Queue ingest job (async, fire-and-forget)
+    const jobId = `ingest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    setImmediate(async () => {
+      try {
+        await execFileAsync('python3', [
+          '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/ingest_worker.py',
+          domain,
+          username,
+          s3Path,
+        ]);
+      } catch (err) {
+        console.error(`[ingest job ${jobId}] error:`, err.message);
+      }
+    });
+
+    return res.json({
+      ok: true,
+      account_id: accountId,
+      message: `Queued ingest for ${user.username}`,
+      job_id: jobId,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not queue ingest', detail: err.message });
+  }
+});
+
 module.exports = router;
