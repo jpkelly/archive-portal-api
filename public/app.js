@@ -267,6 +267,20 @@ async function loadAdminDomain(domainId) {
   renderAccountSyncStatus(accountsData.accounts || []);
 }
 
+async function openDomain(domain) {
+  if (!domain) return;
+  state.domainId = domain.id;
+  state.accountId = null;
+  state.folderId = null;
+  clearList(els.folderList, 'Select an account first.');
+  resetMessageView('Select a folder first.');
+  els.messageDetail.textContent = 'Select a message to view details.';
+  if (state.user && state.user.role === 'admin') {
+    await loadAdminDomain(domain.id);
+  }
+  await loadAccounts(domain.id);
+}
+
 async function loadDomains() {
   const data = await api('/domains');
   state.domains = data.domains || [];
@@ -278,18 +292,13 @@ async function loadDomains() {
     state.domains,
     (d) => `${d.name} (${d.status})`,
     async (domain) => {
-      state.domainId = domain.id;
-      state.accountId = null;
-      state.folderId = null;
-      clearList(els.folderList, 'Select an account first.');
-      resetMessageView('Select a folder first.');
-      els.messageDetail.textContent = 'Select a message to view details.';
-      if (state.user && state.user.role === 'admin') {
-        await loadAdminDomain(domain.id);
-      }
-      await loadAccounts(domain.id);
+      await openDomain(domain);
     }
   );
+
+  if (!state.domainId && state.domains.length) {
+    await openDomain(state.domains[0]);
+  }
 }
 
 let accountRefreshTimer = null;
@@ -677,9 +686,11 @@ async function bootstrapFromToken() {
     state.user = me.user;
     renderAuthState();
     await loadDomains();
-    clearList(els.accountList, 'Select a domain first.');
-    clearList(els.folderList, 'Select an account first.');
-    resetMessageView('Select a folder first.');
+    if (!state.domainId) {
+      clearList(els.accountList, 'Select a domain first.');
+      clearList(els.folderList, 'Select an account first.');
+      resetMessageView('Select a folder first.');
+    }
   } catch (err) {
     localStorage.removeItem('archivePortalToken');
     state.token = '';
@@ -710,9 +721,11 @@ els.loginForm.addEventListener('submit', async (event) => {
     localStorage.setItem('archivePortalToken', data.token);
     renderAuthState();
     await loadDomains();
-    clearList(els.accountList, 'Select a domain first.');
-    clearList(els.folderList, 'Select an account first.');
-    resetMessageView('Select a folder first.');
+    if (!state.domainId) {
+      clearList(els.accountList, 'Select a domain first.');
+      clearList(els.folderList, 'Select an account first.');
+      resetMessageView('Select a folder first.');
+    }
     els.password.value = '';
     setStatus('Info: Logged in. Re-indexing is running in the background and counts will populate as processing completes.', 'info');
     setTimeout(() => {
