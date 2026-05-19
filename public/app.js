@@ -386,6 +386,7 @@ async function queueReindexAllAccessibleAccounts() {
 }
 
 const syncingAccounts = new Set();
+const noArchiveAccounts = new Set();
 
 async function loadAccounts(domainId) {
   const data = await api(`/domains/${domainId}/accounts`);
@@ -414,13 +415,17 @@ async function loadAccounts(domainId) {
     
     const msgCount = account.message_count || 0;
     const isIndexed = account.sync_status === 'indexed';
+    const isNoArchiveEmpty = noArchiveAccounts.has(account.id);
 
     // Clear syncing state once the server confirms it is indexed
-    if (isIndexed) syncingAccounts.delete(account.id);
+    if (isIndexed) {
+      syncingAccounts.delete(account.id);
+      noArchiveAccounts.delete(account.id);
+    }
     const isSyncing = syncingAccounts.has(account.id);
     
     const isIndexedWithMessages = isIndexed && msgCount > 0;
-    const isIndexedEmpty = isIndexed && msgCount === 0;
+    const isIndexedEmpty = (isIndexed && msgCount === 0) || isNoArchiveEmpty;
 
     let indicator = '';
     let bgColor = '';
@@ -473,11 +478,11 @@ async function loadAccounts(domainId) {
       state.folderId = null;
       resetMessageView('Select a folder first.');
       els.messageDetail.textContent = 'Select a message to view details.';
-      if (!isIndexed && !isSyncing) {
+      if (!isIndexed && !isSyncing && !isIndexedEmpty) {
         clearList(els.folderList, 'Not indexed.');
         return;
       }
-      if (isIndexed && msgCount === 0) {
+      if (isIndexedEmpty) {
         clearList(els.folderList, 'No items found.');
         return;
       }
@@ -508,12 +513,17 @@ async function loadAccounts(domainId) {
             method: 'GET',
           });
           if (result.ok) {
+            noArchiveAccounts.delete(account.id);
             setStatus(`Queued ingest for ${account.username}.`);
             setTimeout(() => loadAccounts(domainId), 3000);
           } else {
             const msg = result.error || 'Could not queue ingest';
             if (msg === 'No archives found in S3') {
+              noArchiveAccounts.add(account.id);
               setStatus(`Info: No archives found in S3 for ${account.username}.`, 'info');
+              if (state.accountId === account.id) {
+                clearList(els.folderList, 'No items found.');
+              }
             } else {
               setStatus(`Error: ${msg}`);
             }
@@ -944,6 +954,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
   syncingAccounts.clear();
+  noArchiveAccounts.clear();
   setStatus('');
   renderAuthState();
   clearList(els.domainList, 'Log in to load domains.');
