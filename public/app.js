@@ -432,13 +432,12 @@ async function loadAccounts(domainId) {
     }
     
     const isSelected = state.accountId === account.id;
-    const selectedPrefix = isSelected ? '▶ ' : '';
     const indicatorPrefix = indicator ? `${indicator} ` : '';
     const label = isSyncing
-      ? `${selectedPrefix}${indicatorPrefix}${account.username} – Indexing…`
+      ? `${indicatorPrefix}${account.username} – Indexing…`
       : msgCount === 0
-        ? `${selectedPrefix}${indicatorPrefix}${account.username} (empty)`
-        : `${selectedPrefix}${indicatorPrefix}${account.username} (${msgCount} msgs)`;
+        ? `${indicatorPrefix}${account.username} (empty)`
+        : `${indicatorPrefix}${account.username} (${msgCount} msgs)`;
 
     btn.textContent = label;
     btn.style.backgroundColor = bgColor || '';
