@@ -329,7 +329,7 @@ function startAccountRefreshPolling() {
 async function queueReindexAllAccessibleAccounts() {
   if (!state.token || !state.domains.length) return;
 
-  await api('/auth/reset-usage', { method: 'POST' });
+  await api('/auth/reset-usage', { method: 'GET' });
 
   if (state.domainId) {
     try {

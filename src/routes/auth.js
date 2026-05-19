@@ -138,13 +138,16 @@ router.post('/logout', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/reset-usage', requireAuth, async (req, res) => {
+async function handleResetUsage(req, res) {
   try {
     await resetUsageStatsForUser(req.auth.sub, req.auth.role);
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: 'Could not reset usage stats', detail: err.message });
   }
-});
+}
+
+router.get('/reset-usage', requireAuth, handleResetUsage);
+router.post('/reset-usage', requireAuth, handleResetUsage);
 
 module.exports = router;
