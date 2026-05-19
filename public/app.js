@@ -336,7 +336,7 @@ async function loadAccounts(domainId) {
     
     const label = isSyncing
       ? `${indicator} ${account.username} – Indexing…`
-      : isIndexed && msgCount === 0
+      : msgCount === 0
         ? `${indicator} ${account.username} (empty)`
         : `${indicator} ${account.username} (${msgCount} msgs)`;
 
