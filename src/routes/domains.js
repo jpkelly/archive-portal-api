@@ -6,6 +6,12 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 const execFileAsync = promisify(execFile);
+const awsEnv = {
+  ...process.env,
+  HOME: '/home/centos',
+  AWS_CONFIG_FILE: '/home/centos/.aws/config',
+  AWS_SHARED_CREDENTIALS_FILE: '/home/centos/.aws/credentials',
+};
 
 router.use(requireAuth);
 
@@ -24,6 +30,50 @@ async function canAccessDomain(userId, domainId, role) {
     [userId, domainId]
   );
   return Boolean(access.length);
+}
+
+async function getLatestArchiveTimestamp() {
+  const { stdout } = await execFileAsync(
+    '/usr/bin/aws',
+    ['s3', 'ls', 's3://smallgod-mail-archive/archive/'],
+    { env: awsEnv, maxBuffer: 1024 * 1024 }
+  );
+
+  const timestamps = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/\s+/).pop().replace(/\/$/, ''))
+    .filter((entry) => /^\d{8}_\d{6}$/.test(entry));
+
+  return timestamps.length ? timestamps[timestamps.length - 1] : '';
+}
+
+async function findAccountArchivePath(domain, username) {
+  const latestTimestamp = await getLatestArchiveTimestamp();
+  if (!latestTimestamp) {
+    return null;
+  }
+
+  const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain}/${username}/`;
+  const { stdout } = await execFileAsync(
+    '/usr/bin/aws',
+    ['s3', 'ls', prefix],
+    { env: awsEnv, maxBuffer: 1024 * 1024 }
+  );
+
+  const tarball = stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split(/\s+/).pop())
+    .find((name) => name.endsWith('.tar.gz'));
+
+  if (!tarball) {
+    return null;
+  }
+
+  return `${prefix}${tarball}`;
 }
 
 async function queueIngest(req, res) {
@@ -48,20 +98,14 @@ async function queueIngest(req, res) {
     const domain = user.name;
     const username = user.username.split('@')[0];
 
-    const { stdout } = await execFileAsync('sh', ['-c', `
-      aws s3 ls s3://smallgod-mail-archive/archive/ --recursive | tail -n 1 | awk '{print $NF}' | sed 's#.*archive/##;s#/.*##'
-    `]);
-
-    const latestTimestamp = stdout.trim();
-    if (!latestTimestamp) {
+    const s3Path = await findAccountArchivePath(domain, username);
+    if (!s3Path) {
       return res.json({
         ok: false,
         error: 'No archives found in S3',
         account_id: accountId,
       });
     }
-
-    const s3Path = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain}/${username}/${domain}_${username}_pre2025_${latestTimestamp}.tar.gz`;
 
     const jobId = `ingest_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     setImmediate(async () => {
