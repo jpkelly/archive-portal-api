@@ -357,7 +357,7 @@ async function loadAccounts(domainId) {
       refreshBtn.type = 'button';
       refreshBtn.className = 'button ghost';
       refreshBtn.textContent = '↻';
-      refreshBtn.style.cssText = 'flex:0 0 auto;font-size:0.8rem;padding:2px 5px;line-height:1;border-radius:999px;min-width:1.7rem;';
+      refreshBtn.style.cssText = 'flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;padding:0;font-size:0.8rem;line-height:1;border-radius:999px;min-width:1.5rem;max-width:1.5rem;';
       refreshBtn.title = isIndexed ? 'Re-sync archive' : 'Trigger archive ingest';
       
       refreshBtn.addEventListener('click', async (e) => {
