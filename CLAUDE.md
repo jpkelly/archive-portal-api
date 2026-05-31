@@ -16,6 +16,10 @@ file and `SERVER_ACCESS_AND_DEPLOY_RUNBOOK.md` are the current source of truth.
 
 Live deployment: `archive.smallgod.net`. Mail/archive S3 bucket: `s3://smallgod-mail-archive`.
 
+Known observations/potential issues and the proposed roadmap (including the disk-usage
+reporting feature) are tracked in `docs/ANALYSIS.md` and `docs/PLAN.md`. Read those before
+working on deletion, the archive script, or discover/ingest.
+
 ## Architecture
 
 - **API:** Node.js / Express (`src/`). Runs under Plesk's bundled **Node 12** via PM2.
