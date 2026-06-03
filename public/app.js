@@ -1761,7 +1761,11 @@ if (els.adminUsageBeforeDate) {
 
 if (els.adminUsageRefreshBtn) {
   els.adminUsageRefreshBtn.addEventListener('click', async () => {
-    await loadGlobalUsage(false);
+    try {
+      await loadGlobalUsage(false);
+    } catch (err) {
+      setStatus(`Usage refresh failed: ${err.message}`);
+    }
   });
 }
 
@@ -1771,14 +1775,22 @@ if (els.adminUsageScanDomainBtn) {
       setStatus('Select a domain first.');
       return;
     }
-    await loadDomainUsage(true);
-    await loadGlobalUsage(false).catch(() => {});
+    try {
+      await loadDomainUsage(true);
+      await loadGlobalUsage(false).catch(() => {});
+    } catch (err) {
+      setStatus(`Domain usage scan failed: ${err.message}`);
+    }
   });
 }
 
 if (els.adminUsageScanAllBtn) {
   els.adminUsageScanAllBtn.addEventListener('click', async () => {
-    await loadGlobalUsage(true);
+    try {
+      await loadGlobalUsage(true);
+    } catch (err) {
+      setStatus(`Global usage scan failed: ${err.message}`);
+    }
   });
 }
 

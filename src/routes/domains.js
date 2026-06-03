@@ -1265,60 +1265,6 @@ router.get('/:domainId/accounts/:accountId/folders', async (req, res) => {
   }
 });
 
-router.get('/:domainId/usage', async (req, res) => {
-  const { domainId } = req.params;
-
-  try {
-    if (!requireAdmin(req, res)) return;
-    await ensureUsageTable();
-
-    const domains = await query('SELECT id, name FROM domains WHERE id = ? LIMIT 1', [domainId]);
-    const domain = domains[0];
-    if (!domain) {
-      return res.status(404).json({ error: 'Domain not found' });
-    }
-
-    const beforeDate = normalizeUsageBeforeDate(req.query.beforeDate);
-    const shouldScan = String(req.query.scan || '').toLowerCase() === 'true';
-    if (shouldScan) {
-      await queueDomainUsageScan(domainId, beforeDate);
-    }
-
-    const rows = await query(
-      `SELECT
-         a.id AS account_id,
-         a.username,
-         a.message_count,
-         COALESCE(u.total_bytes, 0) AS total_bytes,
-         COALESCE(u.total_files, 0) AS total_files,
-         COALESCE(u.bucket_gt3y_bytes, 0) AS bucket_gt3y_bytes,
-         COALESCE(u.bucket_1y_to_3y_bytes, 0) AS bucket_1y_to_3y_bytes,
-         COALESCE(u.bucket_lt1y_bytes, 0) AS bucket_lt1y_bytes,
-         COALESCE(u.reclaimable_bytes, 0) AS reclaimable_bytes,
-         u.before_date,
-         u.scanned_at,
-         u.error
-       FROM mail_accounts a
-       LEFT JOIN mail_usage u ON u.account_id = a.id
-       WHERE a.domain_id = ?
-       ORDER BY COALESCE(u.total_bytes, 0) DESC, a.username ASC`,
-      [domainId]
-    );
-
-    const progress = getUsageScanProgress(domainId);
-    return res.json({
-      ok: true,
-      domain: { id: domain.id, name: domain.name },
-      beforeDate,
-      scanning: Boolean(progress && progress.status === 'running'),
-      progress,
-      usage: rows,
-    });
-  } catch (err) {
-    return res.status(500).json({ error: 'Could not fetch domain usage', detail: err.message });
-  }
-});
-
 router.get('/usage', async (req, res) => {
   try {
     if (!requireAdmin(req, res)) return;
@@ -1384,6 +1330,60 @@ router.get('/usage', async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch usage summary', detail: err.message });
+  }
+});
+
+router.get('/:domainId([0-9a-fA-F-]{36})/usage', async (req, res) => {
+  const { domainId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+    await ensureUsageTable();
+
+    const domains = await query('SELECT id, name FROM domains WHERE id = ? LIMIT 1', [domainId]);
+    const domain = domains[0];
+    if (!domain) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const beforeDate = normalizeUsageBeforeDate(req.query.beforeDate);
+    const shouldScan = String(req.query.scan || '').toLowerCase() === 'true';
+    if (shouldScan) {
+      await queueDomainUsageScan(domainId, beforeDate);
+    }
+
+    const rows = await query(
+      `SELECT
+         a.id AS account_id,
+         a.username,
+         a.message_count,
+         COALESCE(u.total_bytes, 0) AS total_bytes,
+         COALESCE(u.total_files, 0) AS total_files,
+         COALESCE(u.bucket_gt3y_bytes, 0) AS bucket_gt3y_bytes,
+         COALESCE(u.bucket_1y_to_3y_bytes, 0) AS bucket_1y_to_3y_bytes,
+         COALESCE(u.bucket_lt1y_bytes, 0) AS bucket_lt1y_bytes,
+         COALESCE(u.reclaimable_bytes, 0) AS reclaimable_bytes,
+         u.before_date,
+         u.scanned_at,
+         u.error
+       FROM mail_accounts a
+       LEFT JOIN mail_usage u ON u.account_id = a.id
+       WHERE a.domain_id = ?
+       ORDER BY COALESCE(u.total_bytes, 0) DESC, a.username ASC`,
+      [domainId]
+    );
+
+    const progress = getUsageScanProgress(domainId);
+    return res.json({
+      ok: true,
+      domain: { id: domain.id, name: domain.name },
+      beforeDate,
+      scanning: Boolean(progress && progress.status === 'running'),
+      progress,
+      usage: rows,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch domain usage', detail: err.message });
   }
 });
 
