@@ -24,6 +24,8 @@ const state = {
   usageDomainRollups: [],
   usageScanStatus: null,
   usageBeforeDate: defaultUsageBeforeDate(),
+  usageOpsInFlight: 0,
+  usageBusyLabel: '',
 };
 
 function defaultUsageBeforeDate() {
@@ -118,6 +120,42 @@ function formatBytes(bytes) {
 function setAdminUsageStatus(text) {
   if (!els.adminUsageStatus) return;
   els.adminUsageStatus.textContent = text || 'No usage data loaded yet.';
+}
+
+function setUsageButtonBusy(buttonEl, busy, busyText) {
+  if (!buttonEl) return;
+  if (!buttonEl.dataset.defaultText) {
+    buttonEl.dataset.defaultText = buttonEl.textContent || '';
+  }
+  buttonEl.disabled = busy;
+  buttonEl.textContent = busy ? busyText : buttonEl.dataset.defaultText;
+}
+
+function isUsageBusy() {
+  return state.usageOpsInFlight > 0;
+}
+
+function updateUsageBusyUi() {
+  const busy = isUsageBusy();
+  const label = state.usageBusyLabel || 'Updating Usage...';
+  setUsageButtonBusy(els.adminUsageRefreshBtn, busy, label);
+  setUsageButtonBusy(els.adminUsageScanDomainBtn, busy, label);
+  setUsageButtonBusy(els.adminUsageScanAllBtn, busy, label);
+  renderUsageTable(state.usageRows);
+}
+
+function beginUsageOperation(label) {
+  state.usageOpsInFlight += 1;
+  if (label) state.usageBusyLabel = label;
+  updateUsageBusyUi();
+}
+
+function endUsageOperation() {
+  state.usageOpsInFlight = Math.max(0, state.usageOpsInFlight - 1);
+  if (!state.usageOpsInFlight) {
+    state.usageBusyLabel = '';
+  }
+  updateUsageBusyUi();
 }
 
 function setStatus(message, level = 'error') {
@@ -526,6 +564,13 @@ function renderUsageTable(rows) {
   const list = rows || [];
   els.adminUsageTable.innerHTML = '';
 
+  if (isUsageBusy()) {
+    const loading = document.createElement('div');
+    loading.className = 'usage-loading-banner';
+    loading.innerHTML = `<span class="usage-loading-dot" aria-hidden="true"></span>${state.usageBusyLabel || 'Updating usage data...'}`;
+    els.adminUsageTable.appendChild(loading);
+  }
+
   if (!list.length) {
     const empty = document.createElement('p');
     empty.className = 'muted';
@@ -538,6 +583,7 @@ function renderUsageTable(rows) {
   topRows.forEach((row, index) => {
     const item = document.createElement('div');
     item.className = 'usage-row';
+    if (isUsageBusy()) item.classList.add('usage-row-updating');
 
     const rank = document.createElement('span');
     rank.className = 'usage-rank';
@@ -581,60 +627,70 @@ function renderUsageTable(rows) {
 async function loadGlobalUsage(scan = false) {
   if (!state.user || state.user.role !== 'admin') return;
   if (!els.adminUsageBeforeDate) return;
-  const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
-  state.usageBeforeDate = beforeDate;
+  beginUsageOperation(scan ? 'Queueing Scan...' : 'Refreshing Usage...');
+  try {
+    const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
+    state.usageBeforeDate = beforeDate;
 
-  const params = new URLSearchParams({ beforeDate });
-  if (scan) params.set('scan', 'true');
-  params.set('_ts', String(Date.now()));
-  const data = await api(`/domains/usage?${params.toString()}`);
-  state.usageRows = data.usage || [];
-  state.usageDomainRollups = data.domains || [];
-  state.usageScanStatus = data.scans || null;
-  renderUsageTable(state.usageRows);
+    const params = new URLSearchParams({ beforeDate });
+    if (scan) params.set('scan', 'true');
+    params.set('_ts', String(Date.now()));
+    const data = await api(`/domains/usage?${params.toString()}`);
+    state.usageRows = data.usage || [];
+    state.usageDomainRollups = data.domains || [];
+    state.usageScanStatus = data.scans || null;
+    renderUsageTable(state.usageRows);
 
-  const activeDomainScan = state.selectedDomain && state.usageScanStatus
-    ? state.usageScanStatus[state.selectedDomain.id]
-    : null;
-  const refreshedAt = new Date().toLocaleTimeString();
-  if (scan) {
-    setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
-  } else if (activeDomainScan && activeDomainScan.status === 'running') {
-    setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
-  } else {
-    setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
+    const activeDomainScan = state.selectedDomain && state.usageScanStatus
+      ? state.usageScanStatus[state.selectedDomain.id]
+      : null;
+    const refreshedAt = new Date().toLocaleTimeString();
+    if (scan) {
+      setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
+    } else if (activeDomainScan && activeDomainScan.status === 'running') {
+      setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
+    } else {
+      setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
+    }
+  } finally {
+    endUsageOperation();
   }
 }
 
 async function loadDomainUsage(scan = false) {
   if (!state.selectedDomain) return;
   if (!els.adminUsageBeforeDate) return;
-  const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
-  state.usageBeforeDate = beforeDate;
+  beginUsageOperation(scan ? 'Queueing Domain Scan...' : 'Refreshing Domain Usage...');
+  try {
+    const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
+    state.usageBeforeDate = beforeDate;
 
-  const params = new URLSearchParams({ beforeDate });
-  if (scan) params.set('scan', 'true');
-  params.set('_ts', String(Date.now()));
-  const data = await api(`/domains/${state.selectedDomain.id}/usage?${params.toString()}`);
+    const params = new URLSearchParams({ beforeDate });
+    if (scan) params.set('scan', 'true');
+    params.set('_ts', String(Date.now()));
+    const data = await api(`/domains/${state.selectedDomain.id}/usage?${params.toString()}`);
 
-  if (Array.isArray(data.usage) && data.usage.length) {
-    state.usageRows = data.usage.map((row) => ({
-      ...row,
-      domain_id: state.selectedDomain.id,
-      domain_name: state.selectedDomain.name,
-    }));
-    renderUsageTable(state.usageRows);
-  }
+    if (Array.isArray(data.usage) && data.usage.length) {
+      state.usageRows = data.usage.map((row) => ({
+        ...row,
+        domain_id: state.selectedDomain.id,
+        domain_name: state.selectedDomain.name,
+      }));
+      renderUsageTable(state.usageRows);
+    }
 
-  const refreshedAt = new Date().toLocaleTimeString();
-  if (scan) {
-    setAdminUsageStatus(data.progress && data.progress.message
-      ? data.progress.message
-      : `Usage scan queued for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
-  } else if (data.progress && data.progress.status === 'running') {
-    setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'} (last refresh ${refreshedAt})`);
-  } else {
-    setAdminUsageStatus(`Loaded ${state.usageRows.length} usage rows for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
+    const refreshedAt = new Date().toLocaleTimeString();
+    if (scan) {
+      setAdminUsageStatus(data.progress && data.progress.message
+        ? data.progress.message
+        : `Usage scan queued for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
+    } else if (data.progress && data.progress.status === 'running') {
+      setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'} (last refresh ${refreshedAt})`);
+    } else {
+      setAdminUsageStatus(`Loaded ${state.usageRows.length} usage rows for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
+    }
+  } finally {
+    endUsageOperation();
   }
 }
 
@@ -1760,6 +1816,8 @@ els.logoutBtn.addEventListener('click', async () => {
   state.usageDomainRollups = [];
   state.usageScanStatus = null;
   state.usageBeforeDate = defaultUsageBeforeDate();
+  state.usageOpsInFlight = 0;
+  state.usageBusyLabel = '';
   state.activeTab = 'viewer';
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
@@ -1804,6 +1862,8 @@ els.tabAdminPanel.addEventListener('click', async () => {
 if (els.adminUsageBeforeDate) {
   els.adminUsageBeforeDate.value = state.usageBeforeDate;
 }
+
+updateUsageBusyUi();
 
 if (els.adminUsageRefreshBtn) {
   els.adminUsageRefreshBtn.addEventListener('click', async () => {

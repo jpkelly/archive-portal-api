@@ -309,6 +309,33 @@ input {
   margin-top: 10px;
 }
 
+.usage-loading-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  color: #2a3a4e;
+  background: #eef4fb;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.usage-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: usagePulse 1s ease-in-out infinite;
+}
+
+@keyframes usagePulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 .usage-row {
   display: grid;
   grid-template-columns: 36px minmax(260px, 1fr) minmax(240px, 0.9fr) auto;
@@ -324,6 +351,10 @@ input {
 
 .usage-row:hover {
   background: var(--hover);
+}
+
+.usage-row-updating {
+  opacity: 0.75;
 }
 
 .usage-rank {
