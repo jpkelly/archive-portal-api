@@ -326,7 +326,7 @@ async function ensureUsageTable() {
       to_date DATE DEFAULT NULL,
       scanned_at DATETIME DEFAULT NULL,
       error TEXT DEFAULT NULL,
-      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT NULL,
       updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       UNIQUE KEY uniq_mail_usage_account (account_id),
