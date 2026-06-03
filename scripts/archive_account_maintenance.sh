@@ -84,12 +84,45 @@ if [[ "$cmd" == "archive" ]]; then
   manifest_path="$work/$manifest_file"
 
   awk -F'\t' '{p=$2; sub("^/", "", p); print p}' "$sized" > "$paths"
-  sudo tar -czf "$archive_path" -C / -T "$paths"
-  sudo chown "$(id -u)":"$(id -g)" "$archive_path"
-  gzip -t "$archive_path"
+  if ! sudo tar -czf "$archive_path" -C / -T "$paths"; then
+    echo "ERROR=Failed to create archive tarball"
+    rm -rf "$work"
+    exit 5
+  fi
+  if ! sudo chown "$(id -u)":"$(id -g)" "$archive_path"; then
+    echo "ERROR=Failed to set archive file ownership"
+    rm -rf "$work"
+    exit 5
+  fi
+  if ! gzip -t "$archive_path"; then
+    echo "ERROR=Archive integrity check failed"
+    rm -rf "$work"
+    exit 5
+  fi
 
-  archive_bytes="$(stat -f '%z' "$archive_path")"
-  sha256 -q "$archive_path" > "$checksum_path"
+  if ! archive_bytes="$(stat -c '%s' "$archive_path" 2>/dev/null)"; then
+    echo "ERROR=Failed to read archive size"
+    rm -rf "$work"
+    exit 5
+  fi
+  if [[ ! "$archive_bytes" =~ ^[0-9]+$ ]]; then
+    echo "ERROR=Archive size is invalid"
+    rm -rf "$work"
+    exit 5
+  fi
+
+  checksum="$(sha256sum "$archive_path" 2>/dev/null | awk '{print $1}')"
+  if [[ ! "$checksum" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR=Failed to generate archive checksum"
+    rm -rf "$work"
+    exit 5
+  fi
+  echo "$checksum" > "$checksum_path"
+  if [[ ! -s "$checksum_path" ]]; then
+    echo "ERROR=Checksum file is empty"
+    rm -rf "$work"
+    exit 5
+  fi
 
   {
     echo "domain=$domain"
