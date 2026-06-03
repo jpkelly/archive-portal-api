@@ -745,9 +745,6 @@ async function loadDomainUsage(scan = false) {
         domain_name: state.selectedDomain.name,
       }));
       renderUsageTable(state.usageRows);
-    } else if (Array.isArray(data.usage)) {
-      state.usageRows = [];
-      renderUsageTable(state.usageRows);
     }
 
     const refreshedAt = new Date().toLocaleTimeString();
@@ -765,6 +762,8 @@ async function loadDomainUsage(scan = false) {
       setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'} (last refresh ${refreshedAt})`);
     } else if (hasCutoffMismatch) {
       setAdminUsageStatus(`Loaded ${state.usageRows.length} rows for ${state.selectedDomain.name}, but scanned cutoff is ${rowCutoffs.join(', ')}. Click Scan Selected Domain to recalculate for ${beforeDate}. Last refresh ${refreshedAt}.`);
+    } else if (Array.isArray(data.usage) && data.usage.length === 0) {
+      setAdminUsageStatus(`Selected domain ${state.selectedDomain.name} has no usage rows yet. Global usage list is unchanged. Last refresh ${refreshedAt}.`);
     } else {
       setAdminUsageStatus(`Loaded ${state.usageRows.length} usage rows for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
     }
