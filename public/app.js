@@ -690,7 +690,13 @@ async function loadGlobalUsage(scan = false, options = {}) {
     if (scan) params.set('scan', 'true');
     params.set('_ts', String(Date.now()));
     const data = await api(`/domains/usage?${params.toString()}`);
-    state.usageRows = data.usage || [];
+    const incomingRows = Array.isArray(data.usage) ? data.usage : [];
+    // Protect against transient empty responses racing with concurrent refreshes.
+    if (incomingRows.length === 0 && state.usageRows.length > 0 && !scan) {
+      setAdminUsageStatus('Usage refresh returned no rows temporarily; keeping previous rows. Try refresh again if this persists.');
+    } else {
+      state.usageRows = incomingRows;
+    }
     state.usageDomainRollups = data.domains || [];
     state.usageScanStatus = data.scans || null;
     renderUsageTable(state.usageRows);
