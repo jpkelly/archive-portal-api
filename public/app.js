@@ -64,6 +64,7 @@ const els = {
   adminDomainStatus: document.getElementById('adminDomainStatus'),
   adminSaveDomainBtn: document.getElementById('adminSaveDomainBtn'),
   adminSyncAccountsBtn: document.getElementById('adminSyncAccountsBtn'),
+  adminSyncAllAccountsBtn: document.getElementById('adminSyncAllAccountsBtn'),
   adminMemberEmail: document.getElementById('adminMemberEmail'),
   adminMemberPermission: document.getElementById('adminMemberPermission'),
   adminAddMemberBtn: document.getElementById('adminAddMemberBtn'),
@@ -1264,6 +1265,38 @@ els.adminSyncAccountsBtn.addEventListener('click', async () => {
     button.textContent = originalText;
   }
 });
+
+if (els.adminSyncAllAccountsBtn) {
+  els.adminSyncAllAccountsBtn.addEventListener('click', async () => {
+    const button = els.adminSyncAllAccountsBtn;
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Syncing all...';
+
+    try {
+      const result = await api('/domains/sync-accounts-all', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+
+      await loadDomains();
+      if (state.selectedDomain) {
+        await loadAdminDomain(state.selectedDomain.id).catch(() => {});
+      }
+
+      const failedCount = Array.isArray(result.failed) ? result.failed.length : 0;
+      setStatus(
+        `All-domain sync complete: +${result.inserted || 0} accounts across ${result.domainsWithChanges || 0}/${result.processedDomains || 0} domains (${failedCount} failed). Total accounts: ${result.totalAccounts || 0}.`,
+        'info'
+      );
+    } catch (err) {
+      setStatus(`All-domain sync failed: ${err.message}`);
+    } finally {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
+  });
+}
 
 els.adminQueueSyncBtn.addEventListener('click', async () => {
   if (!state.selectedDomain) return;

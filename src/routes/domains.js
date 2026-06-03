@@ -712,6 +712,50 @@ async function syncDomainAccountsFromPlesk(domainName) {
   await execFileAsync('sudo', ['plesk', 'db', '-e', sql], { maxBuffer: 1024 * 1024 });
 }
 
+async function syncAllDomainAccountsFromPlesk() {
+  const domains = await query('SELECT id, name FROM domains ORDER BY name ASC');
+
+  let inserted = 0;
+  let domainsWithChanges = 0;
+  const failed = [];
+
+  for (const domain of domains) {
+    const beforeRows = await query(
+      'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
+      [domain.id]
+    );
+    const beforeCount = Number(beforeRows[0] && beforeRows[0].count ? beforeRows[0].count : 0);
+
+    try {
+      await syncDomainAccountsFromPlesk(domain.name);
+    } catch (err) {
+      failed.push({ domain: domain.name, error: err.message });
+      continue;
+    }
+
+    const afterRows = await query(
+      'SELECT COUNT(*) AS count FROM mail_accounts WHERE domain_id = ?',
+      [domain.id]
+    );
+    const afterCount = Number(afterRows[0] && afterRows[0].count ? afterRows[0].count : 0);
+
+    const delta = Math.max(0, afterCount - beforeCount);
+    inserted += delta;
+    if (delta > 0) domainsWithChanges += 1;
+  }
+
+  const totalRows = await query('SELECT COUNT(*) AS count FROM mail_accounts');
+  const totalAccounts = Number(totalRows[0] && totalRows[0].count ? totalRows[0].count : 0);
+
+  return {
+    processedDomains: domains.length,
+    inserted,
+    domainsWithChanges,
+    failed,
+    totalAccounts,
+  };
+}
+
 router.get('/', async (req, res) => {
   try {
     const sql = req.auth.role === 'admin'
@@ -834,6 +878,17 @@ router.post('/discover-all', async (req, res) => {
     return res.json({ ok: true, discovered: totalDiscovered, domains: domainResults, orphans });
   } catch (err) {
     return res.status(500).json({ error: 'Discover all failed', detail: err.message });
+  }
+});
+
+router.post('/sync-accounts-all', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const result = await syncAllDomainAccountsFromPlesk();
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not sync accounts for all domains', detail: err.message });
   }
 });
 
