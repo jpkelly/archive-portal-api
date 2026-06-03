@@ -415,26 +415,8 @@ async function queueDomainUsageScan(domainId, beforeDate) {
 
       await withConcurrency(
         accounts.map((account) => async () => {
-          const usernameLocal = String(account.username || '').split('@')[0];
           try {
-            const { stdout } = await execFileAsync(
-              'bash',
-              [
-                '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
-                'report',
-                domain.name,
-                usernameLocal,
-                range.fromDate,
-                range.toDate,
-                range.mode,
-              ],
-              { env: awsEnv, maxBuffer: 1024 * 1024 }
-            );
-            const parsed = parseKeyValueStdout(stdout);
-            if (String(parsed.STATUS || '').toLowerCase() !== 'ok') {
-              throw new Error(parsed.ERROR || 'Report script failed');
-            }
-            await upsertUsageSnapshot(account.id, domainId, parsed, range, null);
+            await refreshAccountUsageSnapshot(domain, account, beforeDate);
             done += 1;
           } catch (err) {
             failed += 1;
@@ -488,6 +470,30 @@ async function queueDomainUsageScan(domainId, beforeDate) {
   });
 
   return true;
+}
+
+async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
+  const range = buildBeforeRange(beforeDate);
+  const usernameLocal = String(account.username || '').split('@')[0];
+  const { stdout } = await execFileAsync(
+    'bash',
+    [
+      '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+      'report',
+      domain.name,
+      usernameLocal,
+      range.fromDate,
+      range.toDate,
+      range.mode,
+    ],
+    { env: awsEnv, maxBuffer: 1024 * 1024 }
+  );
+  const parsed = parseKeyValueStdout(stdout);
+  if (String(parsed.STATUS || '').toLowerCase() !== 'ok') {
+    throw new Error(parsed.ERROR || 'Report script failed');
+  }
+  await upsertUsageSnapshot(account.id, domain.id, parsed, range, null);
+  return { range, parsed };
 }
 
 async function getLatestArchiveTimestamp() {
@@ -1230,6 +1236,63 @@ router.get('/:domainId/usage', async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch domain usage', detail: err.message });
+  }
+});
+
+router.post('/:domainId/usage/:accountId/refresh', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+    await ensureUsageTable();
+
+    const domains = await query('SELECT id, name FROM domains WHERE id = ? LIMIT 1', [domainId]);
+    const domain = domains[0];
+    if (!domain) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const accounts = await query(
+      'SELECT id, username FROM mail_accounts WHERE id = ? AND domain_id = ? LIMIT 1',
+      [accountId, domainId]
+    );
+    const account = accounts[0];
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found for domain' });
+    }
+
+    const beforeDate = normalizeUsageBeforeDate((req.body && req.body.beforeDate) || req.query.beforeDate);
+    await refreshAccountUsageSnapshot(domain, account, beforeDate);
+
+    const rows = await query(
+      `SELECT
+         a.id AS account_id,
+         a.username,
+         a.message_count,
+         COALESCE(u.total_bytes, 0) AS total_bytes,
+         COALESCE(u.total_files, 0) AS total_files,
+         COALESCE(u.bucket_gt3y_bytes, 0) AS bucket_gt3y_bytes,
+         COALESCE(u.bucket_1y_to_3y_bytes, 0) AS bucket_1y_to_3y_bytes,
+         COALESCE(u.bucket_lt1y_bytes, 0) AS bucket_lt1y_bytes,
+         COALESCE(u.reclaimable_bytes, 0) AS reclaimable_bytes,
+         u.before_date,
+         u.scanned_at,
+         u.error
+       FROM mail_accounts a
+       LEFT JOIN mail_usage u ON u.account_id = a.id
+       WHERE a.id = ?
+       LIMIT 1`,
+      [accountId]
+    );
+
+    return res.json({
+      ok: true,
+      beforeDate,
+      domain: { id: domain.id, name: domain.name },
+      usage: rows[0] || null,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not refresh account usage', detail: err.message });
   }
 });
 

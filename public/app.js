@@ -26,6 +26,7 @@ const state = {
   usageBeforeDate: defaultUsageBeforeDate(),
   usageOpsInFlight: 0,
   usageBusyLabel: '',
+  usageRowRefreshInFlight: new Set(),
 };
 
 function defaultUsageBeforeDate() {
@@ -570,6 +571,29 @@ async function applyUsageSuggestion(row) {
   setStatus(`Prepared archive selection for ${row.username} (${row.domain_name}).`, 'info');
 }
 
+async function refreshUsageRow(row) {
+  if (!row || !row.domain_id || !row.account_id) return;
+  const id = String(row.account_id);
+  if (state.usageRowRefreshInFlight.has(id)) return;
+
+  state.usageRowRefreshInFlight.add(id);
+  renderUsageTable(state.usageRows);
+  try {
+    const beforeDate = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
+    await api(`/domains/${row.domain_id}/usage/${row.account_id}/refresh`, {
+      method: 'POST',
+      body: JSON.stringify({ beforeDate }),
+    });
+    await loadGlobalUsage(false, { background: true });
+    setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
+  } catch (err) {
+    setStatus(`Row usage refresh failed: ${err.message}`);
+  } finally {
+    state.usageRowRefreshInFlight.delete(id);
+    renderUsageTable(state.usageRows);
+  }
+}
+
 function renderUsageTable(rows) {
   if (!els.adminUsageTable) return;
   const list = rows || [];
@@ -632,9 +656,11 @@ function renderUsageTable(rows) {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'button ghost';
-    action.textContent = 'Select For Archive';
-    action.title = 'Select this mailbox in Archive Lifecycle Management and prefill the before-date mode.';
-    action.addEventListener('click', () => applyUsageSuggestion(row));
+    const refreshingRow = state.usageRowRefreshInFlight.has(String(row.account_id));
+    action.textContent = refreshingRow ? 'Refreshing...' : 'Refresh Row';
+    action.title = 'Recalculate usage buckets for this mailbox using the selected cutoff date.';
+    action.disabled = refreshingRow;
+    action.addEventListener('click', () => refreshUsageRow(row));
 
     item.appendChild(rank);
     item.appendChild(identity);
@@ -1893,6 +1919,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.usageBeforeDate = defaultUsageBeforeDate();
   state.usageOpsInFlight = 0;
   state.usageBusyLabel = '';
+  state.usageRowRefreshInFlight = new Set();
   state.activeTab = 'viewer';
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
