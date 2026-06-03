@@ -1,5 +1,8 @@
 const express = require('express');
 const { execFile, spawn } = require('child_process');
+const fs = require('fs/promises');
+const os = require('os');
+const path = require('path');
 const { promisify } = require('util');
 const { query } = require('../db');
 const { requireAuth } = require('../middleware/auth');
@@ -205,6 +208,12 @@ async function verifyS3ObjectExists(s3Uri) {
   } catch (_) {
     return false;
   }
+}
+
+function deriveManifestS3Uri(archiveS3Uri) {
+  if (!archiveS3Uri) return null;
+  if (!archiveS3Uri.endsWith('.tar.gz')) return null;
+  return archiveS3Uri.replace(/\.tar\.gz$/, '.manifest.txt');
 }
 
 function parseKeyValueStdout(stdout) {
@@ -1252,6 +1261,7 @@ router.post('/:domainId/accounts/:accountId/archive/verify', async (req, res) =>
 
 router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req, res) => {
   const { domainId, accountId } = req.params;
+  let tempDir;
 
   try {
     if (!requireAdmin(req, res)) return;
@@ -1272,20 +1282,58 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
       return res.status(400).json({ error: 'Archive job is still running.' });
     }
 
-    const usernameLocal = String(account.username || '').split('@')[0];
-    const { stdout } = await execFileAsync(
-      'bash',
-      [
-        '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
-        'delete',
-        account.domain_name,
-        usernameLocal,
-        current.fromDate,
-        current.toDate,
-        current.mode,
-      ],
+    if (!current.archive_s3_uri || current.archive_file_count === 0 || current.status === 'completed_no_files') {
+      const next = {
+        ...current,
+        deletion_status: 'completed',
+        deletion_message: `Deleted 0 files from server maildir for verified range ${current.range_label}`,
+        delete_count: 0,
+        deleted_at: new Date().toISOString(),
+      };
+      await setArchiveState(accountId, next);
+
+      return res.json({
+        ok: true,
+        account_id: accountId,
+        deleted_count: 0,
+        archive: next,
+      });
+    }
+
+    const manifestS3Uri = deriveManifestS3Uri(current.archive_s3_uri);
+    if (!manifestS3Uri) {
+      return res.status(500).json({ error: 'Could not determine manifest path for archive delete' });
+    }
+
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'archive-delete-'));
+    const manifestPath = path.join(tempDir, path.basename(manifestS3Uri));
+    await execFileAsync(
+      '/usr/bin/aws',
+      ['s3', 'cp', manifestS3Uri, manifestPath, '--only-show-errors'],
       { env: awsEnv, maxBuffer: 1024 * 1024 }
     );
+
+    const usernameLocal = String(account.username || '').split('@')[0];
+    let stdout;
+    try {
+      ({ stdout } = await execFileAsync(
+        'bash',
+        [
+          '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+          'delete',
+          account.domain_name,
+          usernameLocal,
+          current.fromDate,
+          current.toDate,
+          current.mode,
+          manifestPath,
+        ],
+        { env: awsEnv, maxBuffer: 1024 * 1024 }
+      ));
+    } catch (err) {
+      const parsed = parseKeyValueStdout(err.stdout || '');
+      throw new Error(parsed.ERROR || err.stderr || err.message);
+    }
 
     const parsed = parseKeyValueStdout(stdout);
     const deletedCount = Number(parsed.DELETED_COUNT || 0);
@@ -1307,6 +1355,10 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
     });
   } catch (err) {
     return res.status(500).json({ error: 'Could not delete messages', detail: err.message });
+  } finally {
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 });
 

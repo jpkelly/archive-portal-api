@@ -8,9 +8,10 @@ user="${3:-}"
 from_date="${4:-}"
 to_date="${5:-}"
 mode="${6:-range}"
+manifest_source="${7:-}"
 
 if [[ -z "$cmd" || -z "$domain" || -z "$user" || -z "$from_date" || -z "$to_date" ]]; then
-  echo "ERROR=Usage: archive_account_maintenance.sh <archive|delete> <domain> <user> <from_date> <to_date> [mode]"
+  echo "ERROR=Usage: archive_account_maintenance.sh <archive|delete> <domain> <user> <from_date> <to_date> [mode] [manifest_path_for_delete]"
   exit 2
 fi
 
@@ -48,18 +49,18 @@ if [[ -z "$next_day" ]]; then
   exit 2
 fi
 
-sized="$work/files.tsv"
-paths="$work/paths.txt"
-
-sudo find "$maildir" -type f \
-  ! -path '*/tmp/*' \
-  -newermt "$from_date" \
-  ! -newermt "$next_day" \
-  -printf '%s\t%p\n' > "$sized"
-
-file_count="$(awk -F'\t' 'END{print NR+0}' "$sized")"
-
 if [[ "$cmd" == "archive" ]]; then
+  sized="$work/files.tsv"
+  paths="$work/paths.txt"
+
+  sudo find "$maildir" -type f \
+    ! -path '*/tmp/*' \
+    -newermt "$from_date" \
+    ! -newermt "$next_day" \
+    -printf '%s\t%p\n' > "$sized"
+
+  file_count="$(awk -F'\t' 'END{print NR+0}' "$sized")"
+
   if [[ "$file_count" -eq 0 ]]; then
     echo "STATUS=no_files"
     echo "FILE_COUNT=0"
@@ -102,6 +103,7 @@ if [[ "$cmd" == "archive" ]]; then
     echo "archive_bytes=$archive_bytes"
     echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$manifest_path"
+  awk -F'\t' '{print "PATH=" $2}' "$sized" >> "$manifest_path"
 
   s3prefix="s3://smallgod-mail-archive/archive/${stamp}/${domain}/${user}"
   aws s3 cp "$archive_path" "$s3prefix/" --only-show-errors
@@ -119,14 +121,64 @@ if [[ "$cmd" == "archive" ]]; then
 fi
 
 if [[ "$cmd" == "delete" ]]; then
-  if [[ "$file_count" -eq 0 ]]; then
+  paths="$work/delete_paths.txt"
+
+  if [[ -z "$manifest_source" ]]; then
+    echo "ERROR=Manifest file is required for delete"
+    rm -rf "$work"
+    exit 2
+  fi
+
+  if [[ ! -f "$manifest_source" ]]; then
+    echo "ERROR=Manifest file not found: $manifest_source"
+    rm -rf "$work"
+    exit 4
+  fi
+
+  expected_count="$(awk -F= '$1 == "file_count" {print $2}' "$manifest_source" | tail -n 1)"
+  if [[ -n "$expected_count" && ! "$expected_count" =~ ^[0-9]+$ ]]; then
+    echo "ERROR=Manifest file_count is invalid"
+    rm -rf "$work"
+    exit 4
+  fi
+
+  awk -F= '/^PATH=/{print substr($0, 6)}' "$manifest_source" > "$paths"
+  manifest_count="$(awk 'END{print NR+0}' "$paths")"
+
+  if [[ "$manifest_count" -eq 0 ]]; then
+    if [[ "${expected_count:-0}" -eq 0 ]]; then
+      echo "STATUS=ok"
+      echo "DELETED_COUNT=0"
+      rm -rf "$work"
+      exit 0
+    fi
+
+    echo "ERROR=Manifest contains no PATH entries"
+    rm -rf "$work"
+    exit 4
+  fi
+
+  if [[ -n "$expected_count" && "$manifest_count" -ne "$expected_count" ]]; then
+    echo "ERROR=Manifest path count does not match file_count"
+    rm -rf "$work"
+    exit 4
+  fi
+
+  while IFS= read -r target; do
+    if [[ -n "$target" && "$target" != "$maildir"/* ]]; then
+      echo "ERROR=Manifest path is outside maildir: $target"
+      rm -rf "$work"
+      exit 4
+    fi
+  done < "$paths"
+
+  if [[ "${expected_count:-0}" -eq 0 ]]; then
     echo "STATUS=ok"
     echo "DELETED_COUNT=0"
     rm -rf "$work"
     exit 0
   fi
 
-  awk -F'\t' '{print $2}' "$sized" > "$paths"
   deleted_count="0"
   while IFS= read -r target; do
     if [[ -n "$target" ]]; then
