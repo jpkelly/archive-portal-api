@@ -805,7 +805,9 @@ async function loadAdminDomain(domainId) {
   state.adminAccounts = accountsData.accounts || [];
   renderAccountSyncStatus(state.adminAccounts);
   renderArchiveAccountTable(state.adminAccounts);
-  await loadDomainUsage(false).catch(() => {});
+  // Keep usage table in global mode; domain/account polling can otherwise
+  // replace global rows with an empty domain-scoped list.
+  await loadGlobalUsage(false, { background: true }).catch(() => {});
   if (data.domain && data.domain.name) {
     els.adminArchiveDiscoverBtn.textContent = `Scan ${data.domain.name}`;
   }
