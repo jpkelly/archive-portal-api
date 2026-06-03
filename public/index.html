@@ -159,6 +159,24 @@
             <button id="adminQueueSyncBtn" class="button ghost" type="button" title="Trigger background ingestion for accounts not yet indexed. Messages appear after processing completes.">Queue Sync for Unindexed</button>
           </div>
 
+          <h4 class="admin-subhead">Disk Usage Reporting</h4>
+          <p class="muted" style="font-size: 0.8rem; margin: 0 0 10px 0;">
+            Read-only mailbox size scan. Use this to rank largest mailboxes and estimate reclaimable bytes before archiving older mail.
+          </p>
+          <div class="admin-grid" style="margin-top: 0;">
+            <label title="Treat messages older than this date as reclaimable for planning purposes.">
+              Reclaim Cutoff (Before Date)
+              <input id="adminUsageBeforeDate" type="date" />
+            </label>
+            <div class="admin-actions" style="gap: 8px; align-items: center;">
+              <button id="adminUsageRefreshBtn" class="button ghost" type="button" title="Refresh usage table from cached database data.">Refresh Usage</button>
+              <button id="adminUsageScanDomainBtn" class="button ghost" type="button" title="Queue an asynchronous read-only usage scan for the currently selected domain.">Scan Selected Domain</button>
+              <button id="adminUsageScanAllBtn" class="button ghost" type="button" title="Queue an asynchronous read-only usage scan for all domains.">Scan All Domains</button>
+            </div>
+          </div>
+          <div id="adminUsageStatus" class="admin-archive-status muted">No usage data loaded yet.</div>
+          <div id="adminUsageTable" class="usage-table"></div>
+
           <h4 class="admin-subhead">Archive Lifecycle Management</h4>
           <p class="muted" style="font-size: 0.8rem; margin: 0 0 10px 0;">
             Select accounts, set a date rule, then Create → Verify → Delete Messages in sequence.

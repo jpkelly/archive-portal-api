@@ -20,7 +20,17 @@ const state = {
   activeTab: 'viewer',
   orphans: [],
   archiveAllPoll: null,
+  usageRows: [],
+  usageDomainRollups: [],
+  usageScanStatus: null,
+  usageBeforeDate: defaultUsageBeforeDate(),
 };
+
+function defaultUsageBeforeDate() {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - 1);
+  return d.toISOString().slice(0, 10);
+}
 
 const els = {
   loginCard: document.getElementById('loginCard'),
@@ -80,10 +90,34 @@ const els = {
   adminArchiveAllBtn: document.getElementById('adminArchiveAllBtn'),
   adminArchiveSummary: document.getElementById('adminArchiveSummary'),
   adminArchiveStatus: document.getElementById('adminArchiveStatus'),
+  adminUsageBeforeDate: document.getElementById('adminUsageBeforeDate'),
+  adminUsageRefreshBtn: document.getElementById('adminUsageRefreshBtn'),
+  adminUsageScanDomainBtn: document.getElementById('adminUsageScanDomainBtn'),
+  adminUsageScanAllBtn: document.getElementById('adminUsageScanAllBtn'),
+  adminUsageStatus: document.getElementById('adminUsageStatus'),
+  adminUsageTable: document.getElementById('adminUsageTable'),
   portalTabs: document.getElementById('portalTabs'),
   tabEmailViewer: document.getElementById('tabEmailViewer'),
   tabAdminPanel: document.getElementById('tabAdminPanel'),
 };
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let n = value;
+  let idx = 0;
+  while (n >= 1024 && idx < units.length - 1) {
+    n /= 1024;
+    idx += 1;
+  }
+  return `${n.toFixed(n >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+function setAdminUsageStatus(text) {
+  if (!els.adminUsageStatus) return;
+  els.adminUsageStatus.textContent = text || 'No usage data loaded yet.';
+}
 
 function setStatus(message, level = 'error') {
   els.status.textContent = message || '';
@@ -459,6 +493,137 @@ function renderArchiveAccountTable(accounts) {
   });
 }
 
+function applyUsageSuggestion(row) {
+  if (!row) return;
+  const domain = state.domains.find((d) => d.id === row.domain_id);
+  if (domain) {
+    state.domainId = domain.id;
+    els.adminDomainSelect.value = domain.id;
+  }
+
+  state.adminArchiveSelectedIds = new Set([String(row.account_id)]);
+  els.adminArchiveMode.value = 'before';
+  els.adminArchiveBeforeDate.value = state.usageBeforeDate;
+  applyArchiveModeVisibility();
+
+  const openTarget = domain || state.selectedDomain;
+  if (openTarget) {
+    openDomain(openTarget).catch(() => {});
+  }
+  setStatus(`Prepared archive selection for ${row.username} (${row.domain_name}).`, 'info');
+}
+
+function renderUsageTable(rows) {
+  if (!els.adminUsageTable) return;
+  const list = rows || [];
+  els.adminUsageTable.innerHTML = '';
+
+  if (!list.length) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = 'No usage rows available yet. Run a scan first.';
+    els.adminUsageTable.appendChild(empty);
+    return;
+  }
+
+  const topRows = list.slice(0, 200);
+  topRows.forEach((row, index) => {
+    const item = document.createElement('div');
+    item.className = 'usage-row';
+
+    const rank = document.createElement('span');
+    rank.className = 'usage-rank';
+    rank.textContent = String(index + 1);
+
+    const identity = document.createElement('div');
+    identity.className = 'usage-identity';
+    const title = document.createElement('strong');
+    title.textContent = `${row.username} @ ${row.domain_name}`;
+    const meta = document.createElement('span');
+    meta.className = 'muted';
+    const scanned = row.scanned_at ? new Date(row.scanned_at).toLocaleString() : 'never';
+    meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}`;
+    identity.appendChild(title);
+    identity.appendChild(meta);
+
+    const totals = document.createElement('div');
+    totals.className = 'usage-totals';
+    totals.innerHTML = `
+      <span title=">3 years">${formatBytes(row.bucket_gt3y_bytes)} old</span>
+      <span title="1-3 years">${formatBytes(row.bucket_1y_to_3y_bytes)} mid</span>
+      <span title="<1 year">${formatBytes(row.bucket_lt1y_bytes)} new</span>
+      <strong>${formatBytes(row.total_bytes)}</strong>
+      <em>Reclaim: ${formatBytes(row.reclaimable_bytes)}</em>
+    `;
+
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'button ghost';
+    action.textContent = 'Use For Archive';
+    action.addEventListener('click', () => applyUsageSuggestion(row));
+
+    item.appendChild(rank);
+    item.appendChild(identity);
+    item.appendChild(totals);
+    item.appendChild(action);
+    els.adminUsageTable.appendChild(item);
+  });
+}
+
+async function loadGlobalUsage(scan = false) {
+  if (!state.user || state.user.role !== 'admin') return;
+  if (!els.adminUsageBeforeDate) return;
+  const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
+  state.usageBeforeDate = beforeDate;
+
+  const params = new URLSearchParams({ beforeDate });
+  if (scan) params.set('scan', 'true');
+  const data = await api(`/domains/usage?${params.toString()}`);
+  state.usageRows = data.usage || [];
+  state.usageDomainRollups = data.domains || [];
+  state.usageScanStatus = data.scans || null;
+  renderUsageTable(state.usageRows);
+
+  const activeDomainScan = state.selectedDomain && state.usageScanStatus
+    ? state.usageScanStatus[state.selectedDomain.id]
+    : null;
+  if (scan) {
+    setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Refresh in a few seconds.`);
+  } else if (activeDomainScan && activeDomainScan.status === 'running') {
+    setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'}`);
+  } else {
+    setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}).`);
+  }
+}
+
+async function loadDomainUsage(scan = false) {
+  if (!state.selectedDomain) return;
+  if (!els.adminUsageBeforeDate) return;
+  const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
+  state.usageBeforeDate = beforeDate;
+
+  const params = new URLSearchParams({ beforeDate });
+  if (scan) params.set('scan', 'true');
+  const data = await api(`/domains/${state.selectedDomain.id}/usage?${params.toString()}`);
+
+  if (Array.isArray(data.usage) && data.usage.length) {
+    state.usageRows = data.usage.map((row) => ({
+      ...row,
+      domain_id: state.selectedDomain.id,
+      domain_name: state.selectedDomain.name,
+    }));
+    renderUsageTable(state.usageRows);
+  }
+
+  if (scan) {
+    setAdminUsageStatus(data.progress && data.progress.message
+      ? data.progress.message
+      : `Usage scan queued for ${state.selectedDomain.name}.`);
+  } else if (data.progress && data.progress.status === 'running') {
+    setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'}`);
+  }
+}
+
 function applyArchiveModeVisibility() {
   const mode = els.adminArchiveMode.value;
   const isBefore = mode === 'before';
@@ -491,6 +656,7 @@ async function loadAdminDomain(domainId) {
   state.adminAccounts = accountsData.accounts || [];
   renderAccountSyncStatus(state.adminAccounts);
   renderArchiveAccountTable(state.adminAccounts);
+  await loadDomainUsage(false).catch(() => {});
   if (data.domain && data.domain.name) {
     els.adminArchiveDiscoverBtn.textContent = `Scan ${data.domain.name}`;
   }
@@ -1544,6 +1710,10 @@ els.logoutBtn.addEventListener('click', async () => {
   state.selectedMembers = [];
   state.adminAccounts = [];
   state.adminArchiveSelectedIds = new Set();
+  state.usageRows = [];
+  state.usageDomainRollups = [];
+  state.usageScanStatus = null;
+  state.usageBeforeDate = defaultUsageBeforeDate();
   state.activeTab = 'viewer';
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
@@ -1560,6 +1730,13 @@ els.logoutBtn.addEventListener('click', async () => {
   els.messageDetailEmail.innerHTML = '';
   els.messageDetailEmail.classList.add('hidden');
   els.viewToggle.classList.add('hidden');
+  if (els.adminUsageBeforeDate) {
+    els.adminUsageBeforeDate.value = state.usageBeforeDate;
+  }
+  if (els.adminUsageTable) {
+    els.adminUsageTable.innerHTML = '';
+  }
+  setAdminUsageStatus('No usage data loaded yet.');
 });
 
 els.tabEmailViewer.addEventListener('click', () => {
@@ -1575,7 +1752,42 @@ els.tabAdminPanel.addEventListener('click', async () => {
     const domainId = state.selectedDomain ? state.selectedDomain.id : state.domains[0].id;
     await loadAdminDomain(domainId).catch(() => {});
   }
+  await loadGlobalUsage(false).catch(() => {});
 });
+
+if (els.adminUsageBeforeDate) {
+  els.adminUsageBeforeDate.value = state.usageBeforeDate;
+}
+
+if (els.adminUsageRefreshBtn) {
+  els.adminUsageRefreshBtn.addEventListener('click', async () => {
+    await loadGlobalUsage(false);
+  });
+}
+
+if (els.adminUsageScanDomainBtn) {
+  els.adminUsageScanDomainBtn.addEventListener('click', async () => {
+    if (!state.selectedDomain) {
+      setStatus('Select a domain first.');
+      return;
+    }
+    await loadDomainUsage(true);
+    await loadGlobalUsage(false).catch(() => {});
+  });
+}
+
+if (els.adminUsageScanAllBtn) {
+  els.adminUsageScanAllBtn.addEventListener('click', async () => {
+    await loadGlobalUsage(true);
+  });
+}
+
+if (els.adminUsageBeforeDate) {
+  els.adminUsageBeforeDate.addEventListener('change', () => {
+    const v = els.adminUsageBeforeDate.value;
+    if (v) state.usageBeforeDate = v;
+  });
+}
 
 bootstrapFromToken();
 applyArchiveModeVisibility();

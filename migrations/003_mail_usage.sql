@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS mail_usage (
+  id CHAR(36) NOT NULL,
+  account_id CHAR(36) NOT NULL,
+  domain_id CHAR(36) NOT NULL,
+  total_bytes BIGINT NOT NULL DEFAULT 0,
+  total_files INT NOT NULL DEFAULT 0,
+  bucket_gt3y_bytes BIGINT NOT NULL DEFAULT 0,
+  bucket_1y_to_3y_bytes BIGINT NOT NULL DEFAULT 0,
+  bucket_lt1y_bytes BIGINT NOT NULL DEFAULT 0,
+  reclaimable_bytes BIGINT NOT NULL DEFAULT 0,
+  mode VARCHAR(16) DEFAULT 'before',
+  before_date DATE DEFAULT NULL,
+  from_date DATE DEFAULT NULL,
+  to_date DATE DEFAULT NULL,
+  scanned_at DATETIME DEFAULT NULL,
+  error TEXT DEFAULT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_mail_usage_account (account_id),
+  KEY idx_mail_usage_domain (domain_id),
+  KEY idx_mail_usage_scanned (scanned_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

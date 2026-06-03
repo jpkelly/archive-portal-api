@@ -301,6 +301,76 @@ input {
   word-break: break-word;
 }
 
+.usage-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.usage-row {
+  display: grid;
+  grid-template-columns: 36px minmax(260px, 1fr) minmax(240px, 0.9fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.usage-row:last-child {
+  border-bottom: none;
+}
+
+.usage-row:hover {
+  background: var(--hover);
+}
+
+.usage-rank {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: right;
+}
+
+.usage-identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.usage-identity strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.88rem;
+}
+
+.usage-identity .muted {
+  font-size: 0.75rem;
+}
+
+.usage-totals {
+  display: grid;
+  grid-template-columns: repeat(5, auto);
+  gap: 8px;
+  align-items: center;
+  justify-content: start;
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.usage-totals strong {
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.usage-totals em {
+  font-style: normal;
+  color: #355e3b;
+  font-weight: 600;
+}
 /* ── Archive account checklist ── */
 .archive-account-header {
   display: flex;
@@ -636,5 +706,19 @@ input {
 
   .admin-grid {
     grid-template-columns: 1fr;
+  }
+
+  .usage-row {
+    grid-template-columns: 28px 1fr;
+  }
+
+  .usage-totals {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, auto);
+  }
+
+  .usage-row .button {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }

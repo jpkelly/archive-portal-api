@@ -16,6 +16,7 @@ const awsEnv = {
   AWS_SHARED_CREDENTIALS_FILE: '/home/centos/.aws/credentials',
 };
 const ingestProgressByAccount = new Map();
+const usageScanProgressByDomain = new Map();
 
 function setIngestProgress(accountId, text) {
   ingestProgressByAccount.set(accountId, { text, updatedAt: Date.now() });
@@ -261,6 +262,232 @@ async function canAccessDomain(userId, domainId, role) {
     [userId, domainId]
   );
   return Boolean(access.length);
+}
+
+function setUsageScanProgress(domainId, update) {
+  const current = usageScanProgressByDomain.get(domainId) || {};
+  usageScanProgressByDomain.set(domainId, {
+    ...current,
+    ...update,
+    updatedAt: Date.now(),
+  });
+}
+
+function getUsageScanProgress(domainId) {
+  const progress = usageScanProgressByDomain.get(domainId);
+  if (!progress) return null;
+  if ((Date.now() - (progress.updatedAt || 0)) > (30 * 60 * 1000)) {
+    usageScanProgressByDomain.delete(domainId);
+    return null;
+  }
+  return progress;
+}
+
+function clearUsageScanProgressLater(domainId, delayMs = 300000) {
+  setTimeout(() => {
+    usageScanProgressByDomain.delete(domainId);
+  }, delayMs);
+}
+
+function normalizeUsageBeforeDate(value) {
+  const parsed = parseIsoDateOnly(String(value || ''));
+  if (parsed) return parsed;
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - 1);
+  return toIsoDateOnly(d);
+}
+
+function buildBeforeRange(beforeDate) {
+  const before = new Date(`${beforeDate}T00:00:00Z`);
+  const to = new Date(before.getTime() - (24 * 60 * 60 * 1000));
+  return {
+    mode: 'before',
+    fromDate: '1970-01-01',
+    toDate: toIsoDateOnly(to),
+    beforeDate,
+  };
+}
+
+async function ensureUsageTable() {
+  await query(
+    `CREATE TABLE IF NOT EXISTS mail_usage (
+      id CHAR(36) NOT NULL,
+      account_id CHAR(36) NOT NULL,
+      domain_id CHAR(36) NOT NULL,
+      total_bytes BIGINT NOT NULL DEFAULT 0,
+      total_files INT NOT NULL DEFAULT 0,
+      bucket_gt3y_bytes BIGINT NOT NULL DEFAULT 0,
+      bucket_1y_to_3y_bytes BIGINT NOT NULL DEFAULT 0,
+      bucket_lt1y_bytes BIGINT NOT NULL DEFAULT 0,
+      reclaimable_bytes BIGINT NOT NULL DEFAULT 0,
+      mode VARCHAR(16) DEFAULT 'before',
+      before_date DATE DEFAULT NULL,
+      from_date DATE DEFAULT NULL,
+      to_date DATE DEFAULT NULL,
+      scanned_at DATETIME DEFAULT NULL,
+      error TEXT DEFAULT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uniq_mail_usage_account (account_id),
+      KEY idx_mail_usage_domain (domain_id),
+      KEY idx_mail_usage_scanned (scanned_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    []
+  );
+}
+
+async function upsertUsageSnapshot(accountId, domainId, report, range, error = null) {
+  await query(
+    `INSERT INTO mail_usage
+      (id, account_id, domain_id, total_bytes, total_files,
+       bucket_gt3y_bytes, bucket_1y_to_3y_bytes, bucket_lt1y_bytes,
+       reclaimable_bytes, mode, before_date, from_date, to_date,
+       scanned_at, error)
+     VALUES
+      (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?)
+     ON DUPLICATE KEY UPDATE
+      domain_id = VALUES(domain_id),
+      total_bytes = VALUES(total_bytes),
+      total_files = VALUES(total_files),
+      bucket_gt3y_bytes = VALUES(bucket_gt3y_bytes),
+      bucket_1y_to_3y_bytes = VALUES(bucket_1y_to_3y_bytes),
+      bucket_lt1y_bytes = VALUES(bucket_lt1y_bytes),
+      reclaimable_bytes = VALUES(reclaimable_bytes),
+      mode = VALUES(mode),
+      before_date = VALUES(before_date),
+      from_date = VALUES(from_date),
+      to_date = VALUES(to_date),
+      scanned_at = VALUES(scanned_at),
+      error = VALUES(error),
+      updated_at = NOW()`,
+    [
+      accountId,
+      domainId,
+      Number(report.TOTAL_BYTES || 0),
+      Number(report.TOTAL_FILES || 0),
+      Number(report.BUCKET_GT3Y_BYTES || 0),
+      Number(report.BUCKET_1Y_TO_3Y_BYTES || 0),
+      Number(report.BUCKET_LT1Y_BYTES || 0),
+      Number(report.RECLAIMABLE_BYTES || 0),
+      range.mode,
+      range.beforeDate,
+      range.fromDate,
+      range.toDate,
+      error,
+    ]
+  );
+}
+
+async function queueDomainUsageScan(domainId, beforeDate) {
+  const existing = getUsageScanProgress(domainId);
+  if (existing && existing.status === 'running') {
+    return false;
+  }
+
+  const domains = await query('SELECT id, name FROM domains WHERE id = ? LIMIT 1', [domainId]);
+  const domain = domains[0];
+  if (!domain) {
+    throw new Error('Domain not found');
+  }
+
+  const range = buildBeforeRange(beforeDate);
+  const accounts = await query(
+    'SELECT id, username FROM mail_accounts WHERE domain_id = ? ORDER BY username ASC',
+    [domainId]
+  );
+
+  setUsageScanProgress(domainId, {
+    status: 'running',
+    message: 'Queued usage scan',
+    total: accounts.length,
+    done: 0,
+    failed: 0,
+    beforeDate,
+    startedAt: new Date().toISOString(),
+  });
+
+  setImmediate(() => {
+    (async () => {
+      await ensureUsageTable();
+      let done = 0;
+      let failed = 0;
+
+      await withConcurrency(
+        accounts.map((account) => async () => {
+          const usernameLocal = String(account.username || '').split('@')[0];
+          try {
+            const { stdout } = await execFileAsync(
+              'bash',
+              [
+                '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+                'report',
+                domain.name,
+                usernameLocal,
+                range.fromDate,
+                range.toDate,
+                range.mode,
+              ],
+              { env: awsEnv, maxBuffer: 1024 * 1024 }
+            );
+            const parsed = parseKeyValueStdout(stdout);
+            if (String(parsed.STATUS || '').toLowerCase() !== 'ok') {
+              throw new Error(parsed.ERROR || 'Report script failed');
+            }
+            await upsertUsageSnapshot(account.id, domainId, parsed, range, null);
+            done += 1;
+          } catch (err) {
+            failed += 1;
+            await upsertUsageSnapshot(
+              account.id,
+              domainId,
+              {
+                TOTAL_BYTES: 0,
+                TOTAL_FILES: 0,
+                BUCKET_GT3Y_BYTES: 0,
+                BUCKET_1Y_TO_3Y_BYTES: 0,
+                BUCKET_LT1Y_BYTES: 0,
+                RECLAIMABLE_BYTES: 0,
+              },
+              range,
+              err.message
+            ).catch(() => {});
+          }
+
+          setUsageScanProgress(domainId, {
+            status: 'running',
+            message: `Scanning ${done + failed}/${accounts.length}`,
+            total: accounts.length,
+            done,
+            failed,
+            beforeDate,
+          });
+        }),
+        4
+      );
+
+      setUsageScanProgress(domainId, {
+        status: 'completed',
+        message: `Usage scan complete (${done} ok, ${failed} failed)`,
+        total: accounts.length,
+        done,
+        failed,
+        beforeDate,
+        completedAt: new Date().toISOString(),
+      });
+      clearUsageScanProgressLater(domainId, 10 * 60 * 1000);
+    })().catch((err) => {
+      setUsageScanProgress(domainId, {
+        status: 'failed',
+        message: err.message,
+        completedAt: new Date().toISOString(),
+        beforeDate,
+      });
+      clearUsageScanProgressLater(domainId, 10 * 60 * 1000);
+    });
+  });
+
+  return true;
 }
 
 async function getLatestArchiveTimestamp() {
@@ -829,7 +1056,7 @@ router.post('/archive-all', async (req, res) => {
   }
 });
 
-router.get('/:domainId', async (req, res) => {
+router.get('/:domainId([0-9a-fA-F-]{36})', async (req, res) => {
   const { domainId } = req.params;
 
   try {
@@ -865,7 +1092,7 @@ router.get('/:domainId', async (req, res) => {
   }
 });
 
-router.patch('/:domainId', async (req, res) => {
+router.patch('/:domainId([0-9a-fA-F-]{36})', async (req, res) => {
   const { domainId } = req.params;
   const { status, syncAccounts } = req.body || {};
 
@@ -1035,6 +1262,128 @@ router.get('/:domainId/accounts/:accountId/folders', async (req, res) => {
     return res.json({ folders });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch folders', detail: err.message });
+  }
+});
+
+router.get('/:domainId/usage', async (req, res) => {
+  const { domainId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+    await ensureUsageTable();
+
+    const domains = await query('SELECT id, name FROM domains WHERE id = ? LIMIT 1', [domainId]);
+    const domain = domains[0];
+    if (!domain) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    const beforeDate = normalizeUsageBeforeDate(req.query.beforeDate);
+    const shouldScan = String(req.query.scan || '').toLowerCase() === 'true';
+    if (shouldScan) {
+      await queueDomainUsageScan(domainId, beforeDate);
+    }
+
+    const rows = await query(
+      `SELECT
+         a.id AS account_id,
+         a.username,
+         a.message_count,
+         COALESCE(u.total_bytes, 0) AS total_bytes,
+         COALESCE(u.total_files, 0) AS total_files,
+         COALESCE(u.bucket_gt3y_bytes, 0) AS bucket_gt3y_bytes,
+         COALESCE(u.bucket_1y_to_3y_bytes, 0) AS bucket_1y_to_3y_bytes,
+         COALESCE(u.bucket_lt1y_bytes, 0) AS bucket_lt1y_bytes,
+         COALESCE(u.reclaimable_bytes, 0) AS reclaimable_bytes,
+         u.before_date,
+         u.scanned_at,
+         u.error
+       FROM mail_accounts a
+       LEFT JOIN mail_usage u ON u.account_id = a.id
+       WHERE a.domain_id = ?
+       ORDER BY COALESCE(u.total_bytes, 0) DESC, a.username ASC`,
+      [domainId]
+    );
+
+    const progress = getUsageScanProgress(domainId);
+    return res.json({
+      ok: true,
+      domain: { id: domain.id, name: domain.name },
+      beforeDate,
+      scanning: Boolean(progress && progress.status === 'running'),
+      progress,
+      usage: rows,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch domain usage', detail: err.message });
+  }
+});
+
+router.get('/usage', async (req, res) => {
+  try {
+    if (!requireAdmin(req, res)) return;
+    await ensureUsageTable();
+
+    const beforeDate = normalizeUsageBeforeDate(req.query.beforeDate);
+    const shouldScan = String(req.query.scan || '').toLowerCase() === 'true';
+    if (shouldScan) {
+      const domains = await query('SELECT id FROM domains ORDER BY name ASC');
+      for (const d of domains) {
+        await queueDomainUsageScan(d.id, beforeDate);
+      }
+    }
+
+    const rows = await query(
+      `SELECT
+         d.id AS domain_id,
+         d.name AS domain_name,
+         a.id AS account_id,
+         a.username,
+         a.message_count,
+         COALESCE(u.total_bytes, 0) AS total_bytes,
+         COALESCE(u.total_files, 0) AS total_files,
+         COALESCE(u.bucket_gt3y_bytes, 0) AS bucket_gt3y_bytes,
+         COALESCE(u.bucket_1y_to_3y_bytes, 0) AS bucket_1y_to_3y_bytes,
+         COALESCE(u.bucket_lt1y_bytes, 0) AS bucket_lt1y_bytes,
+         COALESCE(u.reclaimable_bytes, 0) AS reclaimable_bytes,
+         u.before_date,
+         u.scanned_at,
+         u.error
+       FROM domains d
+       JOIN mail_accounts a ON a.domain_id = d.id
+       LEFT JOIN mail_usage u ON u.account_id = a.id
+       ORDER BY COALESCE(u.total_bytes, 0) DESC, d.name ASC, a.username ASC`
+    );
+
+    const domainRollups = await query(
+      `SELECT
+         d.id AS domain_id,
+         d.name AS domain_name,
+         SUM(COALESCE(u.total_bytes, 0)) AS total_bytes,
+         SUM(COALESCE(u.reclaimable_bytes, 0)) AS reclaimable_bytes,
+         COUNT(a.id) AS account_count,
+         MAX(u.scanned_at) AS scanned_at
+       FROM domains d
+       LEFT JOIN mail_accounts a ON a.domain_id = d.id
+       LEFT JOIN mail_usage u ON u.account_id = a.id
+       GROUP BY d.id, d.name
+       ORDER BY total_bytes DESC, d.name ASC`
+    );
+
+    const scans = {};
+    for (const [domainId, progress] of usageScanProgressByDomain.entries()) {
+      scans[domainId] = progress;
+    }
+
+    return res.json({
+      ok: true,
+      beforeDate,
+      scans,
+      usage: rows,
+      domains: domainRollups,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch usage summary', detail: err.message });
   }
 });
 

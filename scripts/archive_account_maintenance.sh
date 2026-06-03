@@ -11,7 +11,7 @@ mode="${6:-range}"
 manifest_source="${7:-}"
 
 if [[ -z "$cmd" || -z "$domain" || -z "$user" || -z "$from_date" || -z "$to_date" ]]; then
-  echo "ERROR=Usage: archive_account_maintenance.sh <archive|delete> <domain> <user> <from_date> <to_date> [mode] [manifest_path_for_delete]"
+  echo "ERROR=Usage: archive_account_maintenance.sh <archive|delete|report> <domain> <user> <from_date> <to_date> [mode] [manifest_path_for_delete]"
   exit 2
 fi
 
@@ -148,6 +148,56 @@ if [[ "$cmd" == "archive" ]]; then
   echo "SOURCE_BYTES=$src_bytes"
   echo "ARCHIVE_BYTES=$archive_bytes"
   echo "ARCHIVE_S3_URI=$s3prefix/$archive_file"
+
+  rm -rf "$work"
+  exit 0
+fi
+
+if [[ "$cmd" == "report" ]]; then
+  sized="$work/files.tsv"
+
+  sudo find "$maildir" -type f \
+    ! -path '*/tmp/*' \
+    -newermt "$from_date" \
+    ! -newermt "$next_day" \
+    -printf '%s\t%p\n' > "$sized"
+
+  total_files="$(awk -F'\t' 'END{print NR+0}' "$sized")"
+  total_bytes="$(awk -F'\t' '{s+=$1} END{printf "%.0f", s+0}' "$sized")"
+
+  now_epoch="$(date +%s)"
+  gt3y="0"
+  y1to3="0"
+  lt1y="0"
+
+  while IFS=$'\t' read -r size fpath; do
+    [[ -z "$fpath" ]] && continue
+    mtime="$(stat -c '%Y' "$fpath" 2>/dev/null || true)"
+    if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
+      continue
+    fi
+    age_days="$(( (now_epoch - mtime) / 86400 ))"
+    if (( age_days > 1095 )); then
+      gt3y=$((gt3y + size))
+    elif (( age_days >= 365 )); then
+      y1to3=$((y1to3 + size))
+    else
+      lt1y=$((lt1y + size))
+    fi
+  done < "$sized"
+
+  reclaim_key_date="${to_date//-/}"
+  echo "STATUS=ok"
+  echo "TOTAL_FILES=$total_files"
+  echo "TOTAL_BYTES=$total_bytes"
+  echo "BUCKET_GT3Y_BYTES=$gt3y"
+  echo "BUCKET_1Y_TO_3Y_BYTES=$y1to3"
+  echo "BUCKET_LT1Y_BYTES=$lt1y"
+  echo "RANGE_FROM=$from_date"
+  echo "RANGE_TO=$to_date"
+  echo "MODE=$mode"
+  echo "RECLAIMABLE_BYTES=$total_bytes"
+  echo "RECLAIMABLE_BEFORE_${reclaim_key_date}_BYTES=$total_bytes"
 
   rm -rf "$work"
   exit 0
