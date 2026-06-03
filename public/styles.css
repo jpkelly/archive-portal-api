@@ -381,6 +381,11 @@ input {
   font-size: 0.75rem;
 }
 
+.usage-identity .usage-cutoff-stale {
+  color: #9a6b00;
+  font-weight: 600;
+}
+
 .usage-totals {
   display: grid;
   grid-template-columns: repeat(5, auto);

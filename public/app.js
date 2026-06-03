@@ -117,6 +117,11 @@ function formatBytes(bytes) {
   return `${n.toFixed(n >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
 }
 
+function normalizeDateOnlyText(value) {
+  if (!value) return '';
+  return String(value).slice(0, 10);
+}
+
 function setAdminUsageStatus(text) {
   if (!els.adminUsageStatus) return;
   els.adminUsageStatus.textContent = text || 'No usage data loaded yet.';
@@ -539,7 +544,7 @@ function renderArchiveAccountTable(accounts) {
   });
 }
 
-function applyUsageSuggestion(row) {
+async function applyUsageSuggestion(row) {
   if (!row) return;
   const domain = state.domains.find((d) => d.id === row.domain_id);
   if (domain) {
@@ -554,7 +559,13 @@ function applyUsageSuggestion(row) {
 
   const openTarget = domain || state.selectedDomain;
   if (openTarget) {
-    openDomain(openTarget).catch(() => {});
+    await openDomain(openTarget).catch(() => {});
+  }
+  if (els.adminArchiveStatus) {
+    els.adminArchiveStatus.textContent = `Selected ${row.username} for Archive Lifecycle Management. Next step: click Create Archive.`;
+  }
+  if (els.adminArchiveStatus && typeof els.adminArchiveStatus.scrollIntoView === 'function') {
+    els.adminArchiveStatus.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
   setStatus(`Prepared archive selection for ${row.username} (${row.domain_name}).`, 'info');
 }
@@ -580,6 +591,9 @@ function renderUsageTable(rows) {
   }
 
   const topRows = list.slice(0, 200);
+  const selectedCutoff = normalizeDateOnlyText(
+    (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate
+  );
   topRows.forEach((row, index) => {
     const item = document.createElement('div');
     item.className = 'usage-row';
@@ -596,7 +610,12 @@ function renderUsageTable(rows) {
     const meta = document.createElement('span');
     meta.className = 'muted';
     const scanned = row.scanned_at ? new Date(row.scanned_at).toLocaleString() : 'never';
-    meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}`;
+    const rowCutoff = normalizeDateOnlyText(row.before_date);
+    const isCutoffMismatch = Boolean(rowCutoff && selectedCutoff && rowCutoff !== selectedCutoff);
+    meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}${rowCutoff ? ` · Cutoff: ${rowCutoff}` : ''}${isCutoffMismatch ? ' · stale for selected cutoff' : ''}`;
+    if (isCutoffMismatch) {
+      meta.classList.add('usage-cutoff-stale');
+    }
     identity.appendChild(title);
     identity.appendChild(meta);
 
@@ -613,7 +632,8 @@ function renderUsageTable(rows) {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'button ghost';
-    action.textContent = 'Use For Archive';
+    action.textContent = 'Select For Archive';
+    action.title = 'Select this mailbox in Archive Lifecycle Management and prefill the before-date mode.';
     action.addEventListener('click', () => applyUsageSuggestion(row));
 
     item.appendChild(rank);
@@ -644,11 +664,19 @@ async function loadGlobalUsage(scan = false) {
     const activeDomainScan = state.selectedDomain && state.usageScanStatus
       ? state.usageScanStatus[state.selectedDomain.id]
       : null;
+    const rowCutoffs = Array.from(new Set(
+      state.usageRows
+        .map((row) => normalizeDateOnlyText(row.before_date))
+        .filter(Boolean)
+    ));
+    const hasCutoffMismatch = rowCutoffs.length > 0 && rowCutoffs.some((d) => d !== beforeDate);
     const refreshedAt = new Date().toLocaleTimeString();
     if (scan) {
       setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
     } else if (activeDomainScan && activeDomainScan.status === 'running') {
       setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
+    } else if (hasCutoffMismatch) {
+      setAdminUsageStatus(`Loaded ${state.usageRows.length} rows, but currently scanned cutoff is ${rowCutoffs.join(', ')}. Click Scan All Domains to recalculate for ${beforeDate}. Last refresh ${refreshedAt}.`);
     } else {
       setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
     }
@@ -677,15 +705,26 @@ async function loadDomainUsage(scan = false) {
         domain_name: state.selectedDomain.name,
       }));
       renderUsageTable(state.usageRows);
+    } else if (Array.isArray(data.usage)) {
+      state.usageRows = [];
+      renderUsageTable(state.usageRows);
     }
 
     const refreshedAt = new Date().toLocaleTimeString();
+    const rowCutoffs = Array.from(new Set(
+      (data.usage || [])
+        .map((row) => normalizeDateOnlyText(row.before_date))
+        .filter(Boolean)
+    ));
+    const hasCutoffMismatch = rowCutoffs.length > 0 && rowCutoffs.some((d) => d !== beforeDate);
     if (scan) {
       setAdminUsageStatus(data.progress && data.progress.message
         ? data.progress.message
         : `Usage scan queued for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
     } else if (data.progress && data.progress.status === 'running') {
       setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'} (last refresh ${refreshedAt})`);
+    } else if (hasCutoffMismatch) {
+      setAdminUsageStatus(`Loaded ${state.usageRows.length} rows for ${state.selectedDomain.name}, but scanned cutoff is ${rowCutoffs.join(', ')}. Click Scan Selected Domain to recalculate for ${beforeDate}. Last refresh ${refreshedAt}.`);
     } else {
       setAdminUsageStatus(`Loaded ${state.usageRows.length} usage rows for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
     }
@@ -1903,7 +1942,11 @@ if (els.adminUsageScanAllBtn) {
 if (els.adminUsageBeforeDate) {
   els.adminUsageBeforeDate.addEventListener('change', () => {
     const v = els.adminUsageBeforeDate.value;
-    if (v) state.usageBeforeDate = v;
+    if (v) {
+      state.usageBeforeDate = v;
+      setAdminUsageStatus(`Cutoff changed to ${v}. Run Scan Selected Domain or Scan All Domains to recalculate reclaim values.`);
+      renderUsageTable(state.usageRows);
+    }
   });
 }
 
