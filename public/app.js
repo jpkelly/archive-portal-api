@@ -204,7 +204,14 @@ async function api(path, options = {}) {
     headers.Authorization = `Bearer ${state.token}`;
   }
 
-  const res = await fetch(path, { ...options, headers });
+  const method = String(options.method || 'GET').toUpperCase();
+  const fetchOptions = { ...options, headers };
+  if (method === 'GET') {
+    // Avoid stale admin data behind browser/proxy caching.
+    fetchOptions.cache = 'no-store';
+  }
+
+  const res = await fetch(path, fetchOptions);
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
@@ -579,6 +586,7 @@ async function loadGlobalUsage(scan = false) {
 
   const params = new URLSearchParams({ beforeDate });
   if (scan) params.set('scan', 'true');
+  params.set('_ts', String(Date.now()));
   const data = await api(`/domains/usage?${params.toString()}`);
   state.usageRows = data.usage || [];
   state.usageDomainRollups = data.domains || [];
@@ -588,12 +596,13 @@ async function loadGlobalUsage(scan = false) {
   const activeDomainScan = state.selectedDomain && state.usageScanStatus
     ? state.usageScanStatus[state.selectedDomain.id]
     : null;
+  const refreshedAt = new Date().toLocaleTimeString();
   if (scan) {
-    setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Refresh in a few seconds.`);
+    setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
   } else if (activeDomainScan && activeDomainScan.status === 'running') {
-    setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'}`);
+    setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
   } else {
-    setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}).`);
+    setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
   }
 }
 
@@ -605,6 +614,7 @@ async function loadDomainUsage(scan = false) {
 
   const params = new URLSearchParams({ beforeDate });
   if (scan) params.set('scan', 'true');
+  params.set('_ts', String(Date.now()));
   const data = await api(`/domains/${state.selectedDomain.id}/usage?${params.toString()}`);
 
   if (Array.isArray(data.usage) && data.usage.length) {
@@ -616,12 +626,15 @@ async function loadDomainUsage(scan = false) {
     renderUsageTable(state.usageRows);
   }
 
+  const refreshedAt = new Date().toLocaleTimeString();
   if (scan) {
     setAdminUsageStatus(data.progress && data.progress.message
       ? data.progress.message
-      : `Usage scan queued for ${state.selectedDomain.name}.`);
+      : `Usage scan queued for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
   } else if (data.progress && data.progress.status === 'running') {
-    setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'}`);
+    setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'} (last refresh ${refreshedAt})`);
+  } else {
+    setAdminUsageStatus(`Loaded ${state.usageRows.length} usage rows for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
   }
 }
 
