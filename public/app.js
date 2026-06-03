@@ -644,10 +644,13 @@ function renderUsageTable(rows) {
   });
 }
 
-async function loadGlobalUsage(scan = false) {
+async function loadGlobalUsage(scan = false, options = {}) {
   if (!state.user || state.user.role !== 'admin') return;
   if (!els.adminUsageBeforeDate) return;
-  beginUsageOperation(scan ? 'Queueing Scan...' : 'Refreshing Usage...');
+  const isBackground = Boolean(options && options.background);
+  if (!isBackground) {
+    beginUsageOperation(scan ? 'Queueing Scan...' : 'Refreshing Usage...');
+  }
   try {
     const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
     state.usageBeforeDate = beforeDate;
@@ -660,6 +663,15 @@ async function loadGlobalUsage(scan = false) {
     state.usageDomainRollups = data.domains || [];
     state.usageScanStatus = data.scans || null;
     renderUsageTable(state.usageRows);
+
+    const runningScanExists = Object.values(state.usageScanStatus || {}).some(
+      (progress) => progress && progress.status === 'running'
+    );
+    if (runningScanExists) {
+      startUsageRefreshPolling();
+    } else {
+      stopUsageRefreshPolling();
+    }
 
     const activeDomainScan = state.selectedDomain && state.usageScanStatus
       ? state.usageScanStatus[state.selectedDomain.id]
@@ -681,7 +693,9 @@ async function loadGlobalUsage(scan = false) {
       setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
     }
   } finally {
-    endUsageOperation();
+    if (!isBackground) {
+      endUsageOperation();
+    }
   }
 }
 
@@ -802,11 +816,33 @@ async function loadDomains() {
 }
 
 let accountRefreshTimer = null;
+let usageRefreshTimer = null;
 
 function stopAccountRefreshPolling() {
   if (!accountRefreshTimer) return;
   clearInterval(accountRefreshTimer);
   accountRefreshTimer = null;
+}
+
+function stopUsageRefreshPolling() {
+  if (!usageRefreshTimer) return;
+  clearInterval(usageRefreshTimer);
+  usageRefreshTimer = null;
+}
+
+function startUsageRefreshPolling() {
+  if (usageRefreshTimer) return;
+  usageRefreshTimer = setInterval(async () => {
+    if (!state.user || state.user.role !== 'admin') {
+      stopUsageRefreshPolling();
+      return;
+    }
+    try {
+      await loadGlobalUsage(false, { background: true });
+    } catch (_) {
+      // Keep polling; transient failures should not stop refreshes.
+    }
+  }, 4000);
 }
 
 function startAccountRefreshPolling() {
@@ -1860,6 +1896,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.activeTab = 'viewer';
   state.viewMode = 'plain';
   stopAccountRefreshPolling();
+  stopUsageRefreshPolling();
   syncingAccounts.clear();
   noArchiveAccounts.clear();
   setStatus('');
