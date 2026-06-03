@@ -1,6 +1,6 @@
 const express = require('express');
 const { execFile, spawn } = require('child_process');
-const fs = require('fs/promises');
+const { promises: fs } = require('fs');
 const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
