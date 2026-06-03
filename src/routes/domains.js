@@ -1262,34 +1262,61 @@ router.post('/:domainId/usage/:accountId/refresh', async (req, res) => {
     }
 
     const beforeDate = normalizeUsageBeforeDate((req.body && req.body.beforeDate) || req.query.beforeDate);
-    await refreshAccountUsageSnapshot(domain, account, beforeDate);
+    setUsageScanProgress(domainId, {
+      status: 'running',
+      message: `Refreshing ${account.username}`,
+      total: 1,
+      done: 0,
+      failed: 0,
+      beforeDate,
+      startedAt: new Date().toISOString(),
+    });
 
-    const rows = await query(
-      `SELECT
-         a.id AS account_id,
-         a.username,
-         a.message_count,
-         COALESCE(u.total_bytes, 0) AS total_bytes,
-         COALESCE(u.total_files, 0) AS total_files,
-         COALESCE(u.bucket_gt3y_bytes, 0) AS bucket_gt3y_bytes,
-         COALESCE(u.bucket_1y_to_3y_bytes, 0) AS bucket_1y_to_3y_bytes,
-         COALESCE(u.bucket_lt1y_bytes, 0) AS bucket_lt1y_bytes,
-         COALESCE(u.reclaimable_bytes, 0) AS reclaimable_bytes,
-         u.before_date,
-         u.scanned_at,
-         u.error
-       FROM mail_accounts a
-       LEFT JOIN mail_usage u ON u.account_id = a.id
-       WHERE a.id = ?
-       LIMIT 1`,
-      [accountId]
-    );
+    setImmediate(() => {
+      (async () => {
+        try {
+          await refreshAccountUsageSnapshot(domain, account, beforeDate);
+          setUsageScanProgress(domainId, {
+            status: 'completed',
+            message: `Refresh complete for ${account.username}`,
+            total: 1,
+            done: 1,
+            failed: 0,
+            beforeDate,
+            completedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          setUsageScanProgress(domainId, {
+            status: 'failed',
+            message: `Refresh failed for ${account.username}: ${err.message}`,
+            total: 1,
+            done: 0,
+            failed: 1,
+            beforeDate,
+            completedAt: new Date().toISOString(),
+          });
+        }
+        clearUsageScanProgressLater(domainId, 10 * 60 * 1000);
+      })().catch((err) => {
+        setUsageScanProgress(domainId, {
+          status: 'failed',
+          message: `Refresh failed for ${account.username}: ${err.message}`,
+          total: 1,
+          done: 0,
+          failed: 1,
+          beforeDate,
+          completedAt: new Date().toISOString(),
+        });
+        clearUsageScanProgressLater(domainId, 10 * 60 * 1000);
+      });
+    });
 
     return res.json({
       ok: true,
+      queued: true,
       beforeDate,
       domain: { id: domain.id, name: domain.name },
-      usage: rows[0] || null,
+      account: { id: account.id, username: account.username },
     });
   } catch (err) {
     return res.status(500).json({ error: 'Could not refresh account usage', detail: err.message });

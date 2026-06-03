@@ -580,12 +580,17 @@ async function refreshUsageRow(row) {
   renderUsageTable(state.usageRows);
   try {
     const beforeDate = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
-    await api(`/domains/${row.domain_id}/usage/${row.account_id}/refresh`, {
+    const result = await api(`/domains/${row.domain_id}/usage/${row.account_id}/refresh`, {
       method: 'POST',
       body: JSON.stringify({ beforeDate }),
     });
     await loadGlobalUsage(false, { background: true });
-    setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
+    if (result && result.queued) {
+      startUsageRefreshPolling();
+      setAdminUsageStatus(`Refreshing ${row.username} in background for cutoff ${beforeDate}.`);
+    } else {
+      setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
+    }
   } catch (err) {
     setStatus(`Row usage refresh failed: ${err.message}`);
   } finally {
