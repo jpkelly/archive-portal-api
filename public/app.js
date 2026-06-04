@@ -889,6 +889,7 @@ function renderUsageTable(rows) {
   const selectedCutoff = normalizeDateOnlyText(
     (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate
   );
+  const selectedDomainId = state.selectedDomain ? String(state.selectedDomain.id) : '';
   topRows.forEach((row, index) => {
     const item = document.createElement('div');
     item.className = 'usage-row';
@@ -914,17 +915,31 @@ function renderUsageTable(rows) {
     const rowRefreshTargetCutoff = state.usageRowRefreshTargetCutoff.get(accountId) || selectedCutoff;
     const rowRefreshOutcome = state.usageRowRefreshOutcome.get(accountId);
     const domainProgress = state.usageScanStatus && state.usageScanStatus[String(row.domain_id)];
+    const domainScanRunning = Boolean(
+      selectedDomainId
+      && String(row.domain_id) === selectedDomainId
+      && domainProgress
+      && domainProgress.status === 'running'
+    );
     const progressDone = Number(domainProgress && domainProgress.done || 0);
     const progressTotal = Number(domainProgress && domainProgress.total || 0);
     const progressFraction = progressTotal > 0 ? `${Math.min(progressDone, progressTotal)}/${progressTotal}` : 'working';
     const rowElapsed = formatElapsed(Date.now() - rowRefreshStartedAt);
+    const domainElapsed = domainProgress && domainProgress.startedAt
+      ? formatElapsed(Date.now() - Date.parse(domainProgress.startedAt))
+      : null;
     const rowProgressCutoff = normalizeDateOnlyText((domainProgress && domainProgress.beforeDate) || rowRefreshTargetCutoff);
     const staleSuffix = isCutoffMismatch
-      ? (refreshingRow ? ' · refreshing selected cutoff...' : ' · stale for selected cutoff')
+      ? (refreshingRow
+        ? ' · refreshing selected cutoff...'
+        : (domainScanRunning ? ' · scanning selected domain...' : ' · stale for selected cutoff'))
       : '';
     meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}${rowCutoff ? ` · Cutoff: ${rowCutoff}` : ''}${staleSuffix}`;
-    if (isCutoffMismatch && !refreshingRow) {
+    if (isCutoffMismatch && !refreshingRow && !domainScanRunning) {
       meta.classList.add('usage-cutoff-stale');
+    }
+    if (domainScanRunning) {
+      item.classList.add('usage-row-scanning');
     }
     identity.appendChild(title);
     identity.appendChild(meta);
@@ -933,6 +948,13 @@ function renderUsageTable(rows) {
       progressSpan.className = 'usage-row-progress';
       const progressMessage = domainProgress && domainProgress.message ? ` · ${domainProgress.message}` : '';
       progressSpan.textContent = `Refreshing for ${rowProgressCutoff || rowRefreshTargetCutoff} · ${progressFraction} · ${rowElapsed}${progressMessage}`;
+      identity.appendChild(progressSpan);
+    }
+    if (!refreshingRow && domainScanRunning) {
+      const progressSpan = document.createElement('span');
+      progressSpan.className = 'usage-row-progress';
+      const progressMessage = domainProgress && domainProgress.message ? ` · ${domainProgress.message}` : '';
+      progressSpan.textContent = `Scanning selected domain for ${rowProgressCutoff || selectedCutoff} · ${progressFraction}${domainElapsed ? ` · ${domainElapsed}` : ''}${progressMessage}`;
       identity.appendChild(progressSpan);
     }
     if (!refreshingRow && rowRefreshOutcome) {

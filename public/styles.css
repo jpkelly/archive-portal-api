@@ -412,6 +412,10 @@ input {
   opacity: 0.75;
 }
 
+.usage-row-scanning {
+  background: #f3f8fd;
+}
+
 .usage-rank {
   color: var(--muted);
   font-size: 0.8rem;
