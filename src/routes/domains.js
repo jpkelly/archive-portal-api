@@ -264,6 +264,37 @@ async function canAccessDomain(userId, domainId, role) {
   return Boolean(access.length);
 }
 
+// Global concurrency gate for mailbox usage scans. Scan All Domains can queue a
+// background job per domain (hundreds of them); without a global cap each job's
+// local concurrency would multiply into many simultaneous `sudo find` passes and
+// thrash disk I/O, causing transient scan failures. This semaphore caps the
+// TOTAL number of concurrent mailbox scans across all domains.
+const USAGE_SCAN_GLOBAL_CONCURRENCY = 4;
+function createSemaphore(max) {
+  let active = 0;
+  const waiters = [];
+  function release() {
+    active -= 1;
+    const next = waiters.shift();
+    if (next) {
+      active += 1;
+      next();
+    }
+  }
+  function acquire() {
+    return new Promise((resolve) => {
+      if (active < max) {
+        active += 1;
+        resolve(release);
+      } else {
+        waiters.push(() => resolve(release));
+      }
+    });
+  }
+  return { acquire };
+}
+const usageScanSemaphore = createSemaphore(USAGE_SCAN_GLOBAL_CONCURRENCY);
+
 function setUsageScanProgress(domainId, update) {
   const current = usageScanProgressByDomain.get(domainId) || {};
   usageScanProgressByDomain.set(domainId, {
@@ -418,6 +449,7 @@ async function queueDomainUsageScan(domainId, beforeDate) {
       await withConcurrency(
         accounts.map((account) => async () => {
           const accountId = String(account.id);
+          const release = await usageScanSemaphore.acquire();
           activeAccountIds.add(accountId);
           setUsageScanProgress(domainId, {
             status: 'running',
@@ -448,6 +480,7 @@ async function queueDomainUsageScan(domainId, beforeDate) {
               err.message
             ).catch(() => {});
           } finally {
+            release();
             activeAccountIds.delete(accountId);
           }
 
@@ -508,7 +541,7 @@ async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
       range.toDate,
       range.mode,
     ],
-    { env: awsEnv, maxBuffer: 1024 * 1024 }
+    { env: awsEnv, maxBuffer: 1024 * 1024, timeout: 8 * 60 * 1000, killSignal: 'SIGKILL' }
   );
   const parsed = parseKeyValueStdout(stdout);
   if (String(parsed.STATUS || '').toLowerCase() !== 'ok') {
