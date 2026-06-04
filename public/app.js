@@ -75,7 +75,7 @@ const state = {
   usageRowBulkScanPending: new Set(),
   usageRowBulkBaseline: new Map(),
   usageBulkScanCutoff: '',
-  usageAutoHeal: { active: false, cutoff: '', attempts: 0 },
+  usageAutoHeal: { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 },
 };
 function defaultUsageBeforeDate() {
   const stored = getStoredDate(UI_PREF_KEYS.usageBeforeDate);
@@ -1187,39 +1187,52 @@ async function loadGlobalUsage(scan = false, options = {}) {
     );
     reconcileBulkScan(!runningScanExists);
     renderUsageTable(state.usageRows);
-    if (runningScanExists) {
-      startUsageRefreshPolling();
-    } else {
-      stopUsageRefreshPolling();
-    }
 
     // Self-healing convergence: a Scan All Domains run can be interrupted (e.g. a
     // deploy/restart kills the in-memory scan), leaving some mailboxes at an old
     // cutoff. When auto-heal is active and no scan is running but rows remain at a
     // different cutoff, kick another pass. The backend only rescans stale/errored
-    // accounts, so each pass is cheap and convergence is guaranteed (errored rows
-    // adopt the target cutoff and stop counting as stale). The attempt cap is a
-    // safety net against pathological loops.
-    const MAX_AUTOHEAL_PASSES = 4;
+    // accounts, so each pass is cheap. Convergence is tracked by progress: we only
+    // count a "stall" when a pass finishes with no reduction in stale rows, and we
+    // give up only after several consecutive stalls. This way a long, healthy scan
+    // (which can take many minutes for large mailboxes) never gets abandoned.
+    const MAX_AUTOHEAL_STALLS = 3;
     const staleForTarget = state.usageRows.filter(
       (row) => normalizeDateOnlyText(row.before_date) !== beforeDate
     );
     const heal = state.usageAutoHeal;
-    if (heal && heal.active && heal.cutoff === beforeDate && !runningScanExists) {
+    const healActive = Boolean(heal && heal.active && heal.cutoff === beforeDate);
+
+    // Keep polling while a scan is running OR while we still have stale rows to
+    // heal toward the target cutoff. Stopping only when both are clear prevents
+    // the status banner from freezing mid-convergence.
+    if (runningScanExists || (healActive && staleForTarget.length > 0)) {
+      startUsageRefreshPolling();
+    } else {
+      stopUsageRefreshPolling();
+    }
+
+    if (healActive && !runningScanExists) {
       if (staleForTarget.length === 0) {
-        state.usageAutoHeal = { active: false, cutoff: '', attempts: 0 };
-      } else if (heal.attempts < MAX_AUTOHEAL_PASSES) {
-        heal.attempts += 1;
-        const healAt = new Date().toLocaleTimeString();
-        setAdminUsageStatus(`${formatGlobalScanProgress(beforeDate, healAt)} (heal pass ${heal.attempts}/${MAX_AUTOHEAL_PASSES})`);
-        try {
-          await loadGlobalUsage(true, { background: true });
-        } catch (_) {
-          // Keep polling; a transient failure should not abort the heal cycle.
-        }
-        return;
+        state.usageAutoHeal = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
       } else {
-        state.usageAutoHeal = { active: false, cutoff: '', attempts: 0 };
+        const prevStale = typeof heal.lastStale === 'number' ? heal.lastStale : Infinity;
+        const madeProgress = staleForTarget.length < prevStale;
+        heal.stalls = madeProgress ? 0 : (heal.stalls || 0) + 1;
+        heal.lastStale = staleForTarget.length;
+        if (heal.stalls > MAX_AUTOHEAL_STALLS) {
+          // No progress across several passes; stop retrying to avoid a tight loop.
+          state.usageAutoHeal = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
+        } else {
+          const healAt = new Date().toLocaleTimeString();
+          setAdminUsageStatus(formatGlobalScanProgress(beforeDate, healAt));
+          try {
+            await loadGlobalUsage(true, { background: true });
+          } catch (_) {
+            // Keep polling; a transient failure should not abort the heal cycle.
+          }
+          return;
+        }
       }
     }
 
@@ -2555,10 +2568,10 @@ if (els.adminUsageScanAllBtn) {
   els.adminUsageScanAllBtn.addEventListener('click', async () => {
     try {
       const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
-      state.usageAutoHeal = { active: true, cutoff, attempts: 0 };
+      state.usageAutoHeal = { active: true, cutoff, attempts: 0, stalls: 0, lastStale: Infinity };
       await loadGlobalUsage(true);
     } catch (err) {
-      state.usageAutoHeal = { active: false, cutoff: '', attempts: 0 };
+      state.usageAutoHeal = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
       setStatus(`Global usage scan failed: ${err.message}`);
     }
   });
