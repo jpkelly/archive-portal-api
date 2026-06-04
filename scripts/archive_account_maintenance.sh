@@ -154,16 +154,22 @@ if [[ "$cmd" == "archive" ]]; then
 fi
 
 if [[ "$cmd" == "report" ]]; then
-  sized="$work/files.tsv"
+  all_sized="$work/all-files.tsv"
+  reclaim_sized="$work/reclaim-files.tsv"
+
+  sudo find "$maildir" -type f \
+    ! -path '*/tmp/*' \
+    -printf '%s\t%p\n' > "$all_sized"
 
   sudo find "$maildir" -type f \
     ! -path '*/tmp/*' \
     -newermt "$from_date" \
     ! -newermt "$next_day" \
-    -printf '%s\t%p\n' > "$sized"
+    -printf '%s\t%p\n' > "$reclaim_sized"
 
-  total_files="$(awk -F'\t' 'END{print NR+0}' "$sized")"
-  total_bytes="$(awk -F'\t' '{s+=$1} END{printf "%.0f", s+0}' "$sized")"
+  total_files="$(awk -F'\t' 'END{print NR+0}' "$all_sized")"
+  total_bytes="$(awk -F'\t' '{s+=$1} END{printf "%.0f", s+0}' "$all_sized")"
+  reclaimable_bytes="$(awk -F'\t' '{s+=$1} END{printf "%.0f", s+0}' "$reclaim_sized")"
 
   now_epoch="$(date +%s)"
   gt3y="0"
@@ -184,7 +190,7 @@ if [[ "$cmd" == "report" ]]; then
     else
       lt1y=$((lt1y + size))
     fi
-  done < "$sized"
+  done < "$all_sized"
 
   reclaim_key_date="${to_date//-/}"
   echo "STATUS=ok"
@@ -196,8 +202,8 @@ if [[ "$cmd" == "report" ]]; then
   echo "RANGE_FROM=$from_date"
   echo "RANGE_TO=$to_date"
   echo "MODE=$mode"
-  echo "RECLAIMABLE_BYTES=$total_bytes"
-  echo "RECLAIMABLE_BEFORE_${reclaim_key_date}_BYTES=$total_bytes"
+  echo "RECLAIMABLE_BYTES=$reclaimable_bytes"
+  echo "RECLAIMABLE_BEFORE_${reclaim_key_date}_BYTES=$reclaimable_bytes"
 
   rm -rf "$work"
   exit 0
