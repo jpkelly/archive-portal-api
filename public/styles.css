@@ -424,6 +424,30 @@ input {
   to { transform: rotate(360deg); }
 }
 
+.usage-identity .usage-row-completion {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-top: 2px;
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.usage-identity .usage-row-completion.ok {
+  color: #1b5e20;
+  background: #e8f5e9;
+  border: 1px solid #b8dcb9;
+}
+
+.usage-identity .usage-row-completion.failed {
+  color: #8e1537;
+  background: #fdecef;
+  border: 1px solid #f1bdc8;
+}
+
 .usage-totals {
   display: grid;
   grid-template-columns: repeat(5, auto);

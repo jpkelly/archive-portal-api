@@ -30,6 +30,7 @@ const state = {
   usageRowRefreshErrors: new Map(),
   usageRowRefreshStartedAt: new Map(),
   usageRowRefreshTargetCutoff: new Map(),
+  usageRowRefreshOutcome: new Map(),
 };
 
 function defaultUsageBeforeDate() {
@@ -135,6 +136,11 @@ function formatElapsed(ms) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatClock(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleTimeString();
 }
 
 function setAdminUsageStatus(text) {
@@ -592,6 +598,7 @@ async function refreshUsageRow(row) {
 
   state.usageRowRefreshInFlight.add(id);
   state.usageRowRefreshStartedAt.set(id, Date.now());
+  state.usageRowRefreshOutcome.delete(id);
   renderUsageTable(state.usageRows);
   try {
     const beforeDate = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
@@ -606,19 +613,47 @@ async function refreshUsageRow(row) {
       const outcome = await waitForUsageRowRefresh(row, beforeDate);
       if (outcome.state === 'updated') {
         state.usageRowRefreshErrors.delete(String(row.account_id));
+        state.usageRowRefreshOutcome.set(String(row.account_id), {
+          state: 'completed',
+          at: Date.now(),
+          cutoff: normalizeDateOnlyText(beforeDate),
+        });
         setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
       } else if (outcome.state === 'failed') {
         state.usageRowRefreshErrors.set(String(row.account_id), outcome.message || 'unknown error');
+        state.usageRowRefreshOutcome.set(String(row.account_id), {
+          state: 'failed',
+          at: Date.now(),
+          cutoff: normalizeDateOnlyText(beforeDate),
+          message: outcome.message || 'unknown error',
+        });
         setAdminUsageStatus(`Refresh failed for ${row.username}: ${outcome.message || 'unknown error'}`);
       } else {
         state.usageRowRefreshErrors.set(String(row.account_id), 'Refresh timed out — try again in a moment.');
+        state.usageRowRefreshOutcome.set(String(row.account_id), {
+          state: 'failed',
+          at: Date.now(),
+          cutoff: normalizeDateOnlyText(beforeDate),
+          message: 'Refresh timed out — try again in a moment.',
+        });
         setAdminUsageStatus(`Refresh still running for ${row.username}. Try Refresh Row again in a moment.`);
       }
     } else {
       await loadGlobalUsage(false, { background: true });
+      state.usageRowRefreshOutcome.set(String(row.account_id), {
+        state: 'completed',
+        at: Date.now(),
+        cutoff: normalizeDateOnlyText(beforeDate),
+      });
       setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
     }
   } catch (err) {
+    state.usageRowRefreshOutcome.set(String(row.account_id), {
+      state: 'failed',
+      at: Date.now(),
+      cutoff: normalizeDateOnlyText((els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate),
+      message: err.message,
+    });
     setStatus(`Row usage refresh failed: ${err.message}`);
   } finally {
     state.usageRowRefreshInFlight.delete(id);
@@ -740,6 +775,7 @@ function renderUsageTable(rows) {
     const rowRefreshError = state.usageRowRefreshErrors.get(accountId);
     const rowRefreshStartedAt = state.usageRowRefreshStartedAt.get(accountId) || Date.now();
     const rowRefreshTargetCutoff = state.usageRowRefreshTargetCutoff.get(accountId) || selectedCutoff;
+    const rowRefreshOutcome = state.usageRowRefreshOutcome.get(accountId);
     const domainProgress = state.usageScanStatus && state.usageScanStatus[String(row.domain_id)];
     const progressDone = Number(domainProgress && domainProgress.done || 0);
     const progressTotal = Number(domainProgress && domainProgress.total || 0);
@@ -761,6 +797,18 @@ function renderUsageTable(rows) {
       const progressMessage = domainProgress && domainProgress.message ? ` · ${domainProgress.message}` : '';
       progressSpan.textContent = `Refreshing for ${rowProgressCutoff || rowRefreshTargetCutoff} · ${progressFraction} · ${rowElapsed}${progressMessage}`;
       identity.appendChild(progressSpan);
+    }
+    if (!refreshingRow && rowRefreshOutcome) {
+      const outcomeSpan = document.createElement('span');
+      outcomeSpan.className = `usage-row-completion ${rowRefreshOutcome.state === 'completed' ? 'ok' : 'failed'}`;
+      const outcomeCutoff = normalizeDateOnlyText(rowRefreshOutcome.cutoff) || rowCutoff || selectedCutoff;
+      const outcomeAt = formatClock(rowRefreshOutcome.at);
+      if (rowRefreshOutcome.state === 'completed') {
+        outcomeSpan.textContent = `Completed for ${outcomeCutoff}${outcomeAt ? ` at ${outcomeAt}` : ''}`;
+      } else {
+        outcomeSpan.textContent = `Completed with error for ${outcomeCutoff}${outcomeAt ? ` at ${outcomeAt}` : ''}`;
+      }
+      identity.appendChild(outcomeSpan);
     }
     if (rowRefreshError) {
       const errSpan = document.createElement('span');
