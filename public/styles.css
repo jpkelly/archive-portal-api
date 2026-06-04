@@ -356,6 +356,28 @@ input {
   background: #1c8c43;
 }
 
+.usage-filter-toggle {
+  margin-top: 8px;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #2a3a4e;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.usage-filter-toggle input[type='checkbox'] {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.usage-filter-toggle input[type='checkbox']:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .usage-table {
   border: 1px solid var(--border);
   border-radius: 8px;

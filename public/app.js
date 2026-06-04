@@ -1,6 +1,7 @@
 const UI_PREF_KEYS = {
   selectedDomainId: 'archivePortalSelectedDomainId',
   usageBeforeDate: 'archivePortalUsageBeforeDate',
+  usageSelectedDomainOnly: 'archivePortalUsageSelectedDomainOnly',
   archiveBeforeDate: 'archivePortalArchiveBeforeDate',
   archiveFromDate: 'archivePortalArchiveFromDate',
   archiveToDate: 'archivePortalArchiveToDate',
@@ -72,6 +73,17 @@ function setStoredDomainId(domainId) {
   }
 }
 
+function getStoredBoolean(key, fallback = false) {
+  const raw = (localStorage.getItem(key) || '').trim().toLowerCase();
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  return Boolean(fallback);
+}
+
+function setStoredBoolean(key, value) {
+  localStorage.setItem(key, value ? '1' : '0');
+}
+
 const state = {
   token: localStorage.getItem('archivePortalToken') || '',
   user: null,
@@ -108,6 +120,7 @@ const state = {
   usageRowBulkScanPending: new Set(),
   usageRowBulkBaseline: new Map(),
   usageBulkScanCutoff: '',
+  usageSelectedDomainOnly: getStoredBoolean(UI_PREF_KEYS.usageSelectedDomainOnly, false),
   usageAutoHeal: getStoredAutoHeal(),
 };
 function defaultUsageBeforeDate() {
@@ -182,6 +195,7 @@ const els = {
   adminUsageScanDomainBtn: document.getElementById('adminUsageScanDomainBtn'),
   adminUsageScanAllBtn: document.getElementById('adminUsageScanAllBtn'),
   adminUsageDomainIndicator: document.getElementById('adminUsageDomainIndicator'),
+  adminUsageSelectedDomainOnly: document.getElementById('adminUsageSelectedDomainOnly'),
   adminUsageStatus: document.getElementById('adminUsageStatus'),
   adminUsageTable: document.getElementById('adminUsageTable'),
   portalTabs: document.getElementById('portalTabs'),
@@ -317,6 +331,23 @@ function updateSelectedDomainIndicator() {
       ? `Queue an asynchronous read-only usage scan for ${state.selectedDomain.name}.`
       : 'Select a domain first, then run Scan Selected Domain.';
   }
+
+  if (els.adminUsageSelectedDomainOnly) {
+    els.adminUsageSelectedDomainOnly.disabled = !hasSelectedDomain;
+    els.adminUsageSelectedDomainOnly.checked = Boolean(state.usageSelectedDomainOnly);
+    els.adminUsageSelectedDomainOnly.title = hasSelectedDomain
+      ? `Show only usage rows for ${state.selectedDomain.name}.`
+      : 'Select a domain to filter usage rows by active domain.';
+  }
+}
+
+function getVisibleUsageRows(rows) {
+  const source = Array.isArray(rows) ? rows : [];
+  if (!state.usageSelectedDomainOnly) return source;
+  if (!state.selectedDomain) return source;
+  const selectedDomainId = String(state.selectedDomain.id || '');
+  if (!selectedDomainId) return source;
+  return source.filter((row) => String(row.domain_id) === selectedDomainId);
 }
 
 function isBulkDomainScanProgress(progress) {
@@ -989,6 +1020,7 @@ async function waitForUsageRowRefresh(row, beforeDate) {
 function renderUsageTable(rows) {
   if (!els.adminUsageTable) return;
   const list = rows || [];
+  const visibleList = getVisibleUsageRows(list);
   els.adminUsageTable.innerHTML = '';
 
   if (isUsageBusy()) {
@@ -998,15 +1030,21 @@ function renderUsageTable(rows) {
     els.adminUsageTable.appendChild(loading);
   }
 
-  if (!list.length) {
+  if (!visibleList.length) {
     const empty = document.createElement('p');
     empty.className = 'muted';
-    empty.textContent = 'No usage rows available yet. Run a scan first.';
+    if (!list.length) {
+      empty.textContent = 'No usage rows available yet. Run a scan first.';
+    } else if (state.usageSelectedDomainOnly && state.selectedDomain && state.selectedDomain.name) {
+      empty.textContent = `No usage rows match active domain ${state.selectedDomain.name}.`;
+    } else {
+      empty.textContent = 'No usage rows match the current filter.';
+    }
     els.adminUsageTable.appendChild(empty);
     return;
   }
 
-  const topRows = list.slice(0, 200);
+  const topRows = visibleList.slice(0, 200);
   const selectedCutoff = normalizeDateOnlyText(
     (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate
   );
@@ -1281,6 +1319,10 @@ async function loadGlobalUsage(scan = false, options = {}) {
         .filter(Boolean)
     ));
     const hasCutoffMismatch = rowCutoffs.length > 0 && rowCutoffs.some((d) => d !== beforeDate);
+    const visibleCount = getVisibleUsageRows(state.usageRows).length;
+    const filterSuffix = (state.usageSelectedDomainOnly && state.selectedDomain && state.selectedDomain.name)
+      ? ` (showing ${visibleCount} row${visibleCount === 1 ? '' : 's'} for ${state.selectedDomain.name})`
+      : '';
     const refreshedAt = new Date().toLocaleTimeString();
     const globalScanInProgress = runningScanExists
       || (state.usageAutoHeal && state.usageAutoHeal.active && state.usageAutoHeal.cutoff === beforeDate);
@@ -1289,11 +1331,11 @@ async function loadGlobalUsage(scan = false, options = {}) {
       // mid auto-heal). Show live aggregate progress toward the target cutoff.
       setAdminUsageStatus(formatGlobalScanProgress(beforeDate, refreshedAt));
     } else if (activeDomainScan && activeDomainScan.status === 'running') {
-      setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
+      setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'}${filterSuffix} (last refresh ${refreshedAt})`);
     } else if (hasCutoffMismatch) {
-      setAdminUsageStatus(`Loaded ${state.usageRows.length} rows, but currently scanned cutoff is ${rowCutoffs.join(', ')}. Click Scan All Domains to recalculate for ${beforeDate}. Last refresh ${refreshedAt}.`);
+      setAdminUsageStatus(`Loaded ${state.usageRows.length} rows${filterSuffix}, but currently scanned cutoff is ${rowCutoffs.join(', ')}. Click Scan All Domains to recalculate for ${beforeDate}. Last refresh ${refreshedAt}.`);
     } else {
-      setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
+      setAdminUsageStatus(`Loaded ${state.usageRows.length} account usage rows${filterSuffix} (cutoff ${beforeDate}). Last refresh ${refreshedAt}.`);
     }
   } finally {
     if (!isBackground) {
@@ -2612,6 +2654,16 @@ if (els.adminUsageScanAllBtn) {
       setStoredAutoHeal(state.usageAutoHeal);
       setStatus(`Global usage scan failed: ${err.message}`);
     }
+  });
+}
+
+if (els.adminUsageSelectedDomainOnly) {
+  els.adminUsageSelectedDomainOnly.checked = Boolean(state.usageSelectedDomainOnly);
+  els.adminUsageSelectedDomainOnly.addEventListener('change', () => {
+    state.usageSelectedDomainOnly = Boolean(els.adminUsageSelectedDomainOnly.checked);
+    setStoredBoolean(UI_PREF_KEYS.usageSelectedDomainOnly, state.usageSelectedDomainOnly);
+    renderUsageTable(state.usageRows);
+    loadGlobalUsage(false, { background: true }).catch(() => {});
   });
 }
 
