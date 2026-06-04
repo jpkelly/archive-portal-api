@@ -337,15 +337,23 @@ function reconcileBulkScan(forceFinalize = false) {
     const hasError = Boolean(row.error || row.scan_error);
     if (!advanced && !forceFinalize) return;
     if (!advanced && forceFinalize) {
-      // Row was never rescanned in this pass. Only surface a badge if the DB
-      // actually recorded an error for it; otherwise clear it silently so we
-      // don't show a false "completed with error".
+      // The scan run has finished. A row may not show a strictly-advanced
+      // scanned_at (timing, or it was already current for this cutoff), but if
+      // it matches the target cutoff with no error it is genuinely complete, so
+      // show the green badge. Only show red when the DB recorded an error.
+      const cutoffMatchesFinal = cutoff ? rowCutoff === cutoff : true;
       if (hasError) {
         state.usageRowRefreshOutcome.set(accountId, {
           state: 'failed',
           at: rowScannedAtMs(row) || Date.now(),
           cutoff: rowCutoff || cutoff,
           message: String(row.error || row.scan_error),
+        });
+      } else if (cutoffMatchesFinal) {
+        state.usageRowRefreshOutcome.set(accountId, {
+          state: 'completed',
+          at: rowScannedAtMs(row) || Date.now(),
+          cutoff: cutoff || rowCutoff,
         });
       }
       state.usageRowBulkScanPending.delete(accountId);
