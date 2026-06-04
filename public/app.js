@@ -597,7 +597,7 @@ async function refreshUsageRow(row) {
       } else if (outcome.state === 'failed') {
         setStatus(`Row usage refresh failed: ${outcome.message || 'unknown error'}`);
       } else {
-        setAdminUsageStatus(`Refresh still running for ${row.username}. The row will update when scan data arrives.`);
+        setStatus(`Row usage refresh timed out for ${row.username}. It may still be running in background; try Refresh Row again in a moment.`);
       }
     } else {
       await loadGlobalUsage(false, { background: true });
@@ -615,27 +615,50 @@ async function waitForUsageRowRefresh(row, beforeDate) {
   const accountId = String(row.account_id);
   const domainId = String(row.domain_id);
   const targetCutoff = normalizeDateOnlyText(beforeDate);
+  const startedAtMs = row && row.scanned_at ? Date.parse(row.scanned_at) || Date.now() : Date.now();
   const start = Date.now();
-  const timeoutMs = 90000;
+  const timeoutMs = 120000;
 
   while (Date.now() - start < timeoutMs) {
-    await loadGlobalUsage(false, { background: true });
+    const params = new URLSearchParams({ beforeDate: targetCutoff, _ts: String(Date.now()) });
+    const data = await api(`/domains/${domainId}/usage?${params.toString()}`);
+    const refreshedRow = Array.isArray(data && data.usage)
+      ? data.usage.find((r) => String(r.account_id) === accountId)
+      : null;
 
-    const refreshedRow = (state.usageRows || []).find((r) => String(r.account_id) === accountId);
+    if (refreshedRow) {
+      const merged = {
+        ...refreshedRow,
+        domain_id: row.domain_id,
+        domain_name: row.domain_name,
+      };
+      state.usageRows = (state.usageRows || []).map((r) => (
+        String(r.account_id) === accountId ? merged : r
+      ));
+      renderUsageTable(state.usageRows);
+    }
+
     const refreshedCutoff = normalizeDateOnlyText(refreshedRow && refreshedRow.before_date);
+    const refreshedScannedMs = refreshedRow && refreshedRow.scanned_at
+      ? (Date.parse(refreshedRow.scanned_at) || 0)
+      : 0;
     if (refreshedRow && refreshedCutoff && refreshedCutoff === targetCutoff) {
       return { state: 'updated' };
     }
 
-    const scan = (state.usageScanStatus && (state.usageScanStatus[domainId] || state.usageScanStatus[row.domain_id])) || null;
-    if (scan && scan.status === 'failed') {
-      return { state: 'failed', message: scan.message || 'scan failed' };
+    if (refreshedRow && refreshedRow.error && refreshedScannedMs >= startedAtMs) {
+      return { state: 'failed', message: refreshedRow.error };
     }
-    if (scan && scan.status === 'completed' && refreshedRow) {
+
+    if (refreshedRow && refreshedScannedMs >= startedAtMs && refreshedCutoff && refreshedCutoff !== targetCutoff) {
       return {
         state: 'failed',
         message: `refresh completed but cutoff is still ${refreshedCutoff || 'unknown'} (expected ${targetCutoff})`,
       };
+    }
+
+    if (data && data.progress && data.progress.status === 'failed') {
+      return { state: 'failed', message: data.progress.message || 'scan failed' };
     }
 
     await delay(2000);
@@ -686,8 +709,12 @@ function renderUsageTable(rows) {
     const scanned = row.scanned_at ? new Date(row.scanned_at).toLocaleString() : 'never';
     const rowCutoff = normalizeDateOnlyText(row.before_date);
     const isCutoffMismatch = Boolean(rowCutoff && selectedCutoff && rowCutoff !== selectedCutoff);
-    meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}${rowCutoff ? ` · Cutoff: ${rowCutoff}` : ''}${isCutoffMismatch ? ' · stale for selected cutoff' : ''}`;
-    if (isCutoffMismatch) {
+    const refreshingRow = state.usageRowRefreshInFlight.has(String(row.account_id));
+    const staleSuffix = isCutoffMismatch
+      ? (refreshingRow ? ' · refreshing selected cutoff...' : ' · stale for selected cutoff')
+      : '';
+    meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}${rowCutoff ? ` · Cutoff: ${rowCutoff}` : ''}${staleSuffix}`;
+    if (isCutoffMismatch && !refreshingRow) {
       meta.classList.add('usage-cutoff-stale');
     }
     identity.appendChild(title);
@@ -706,7 +733,6 @@ function renderUsageTable(rows) {
     const action = document.createElement('button');
     action.type = 'button';
     action.className = 'button ghost';
-    const refreshingRow = state.usageRowRefreshInFlight.has(String(row.account_id));
     action.textContent = refreshingRow ? 'Refreshing...' : 'Refresh Row';
     action.title = 'Recalculate usage buckets for this mailbox using the selected cutoff date.';
     action.disabled = refreshingRow;
