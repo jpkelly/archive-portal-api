@@ -1295,6 +1295,20 @@ router.post('/:domainId/usage/:accountId/refresh', async (req, res) => {
             beforeDate,
             completedAt: new Date().toISOString(),
           });
+          // Write error + fresh scanned_at to DB so the row visibly updates in the UI
+          await query(
+            `INSERT INTO mail_usage
+               (id, account_id, domain_id, total_bytes, total_files,
+                bucket_gt3y_bytes, bucket_1y_to_3y_bytes, bucket_lt1y_bytes,
+                reclaimable_bytes, mode, before_date, scanned_at, error)
+             VALUES (UUID(), ?, ?, 0, 0, 0, 0, 0, 0, 'before', ?, NOW(), ?)
+             ON DUPLICATE KEY UPDATE
+               before_date = VALUES(before_date),
+               scanned_at  = NOW(),
+               error       = VALUES(error),
+               updated_at  = NOW()`,
+            [account.id, domain.id, beforeDate, err.message]
+          ).catch(() => {});
         }
         clearUsageScanProgressLater(domainId, 10 * 60 * 1000);
       })().catch((err) => {

@@ -27,6 +27,7 @@ const state = {
   usageOpsInFlight: 0,
   usageBusyLabel: '',
   usageRowRefreshInFlight: new Set(),
+  usageRowRefreshErrors: new Map(),
 };
 
 function defaultUsageBeforeDate() {
@@ -593,11 +594,14 @@ async function refreshUsageRow(row) {
       setAdminUsageStatus(`Refreshing ${row.username} in background for cutoff ${beforeDate}.`);
       const outcome = await waitForUsageRowRefresh(row, beforeDate);
       if (outcome.state === 'updated') {
+        state.usageRowRefreshErrors.delete(String(row.account_id));
         setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
       } else if (outcome.state === 'failed') {
-        setStatus(`Row usage refresh failed: ${outcome.message || 'unknown error'}`);
+        state.usageRowRefreshErrors.set(String(row.account_id), outcome.message || 'unknown error');
+        setAdminUsageStatus(`Refresh failed for ${row.username}: ${outcome.message || 'unknown error'}`);
       } else {
-        setStatus(`Row usage refresh timed out for ${row.username}. It may still be running in background; try Refresh Row again in a moment.`);
+        state.usageRowRefreshErrors.set(String(row.account_id), 'Refresh timed out — try again in a moment.');
+        setAdminUsageStatus(`Refresh still running for ${row.username}. Try Refresh Row again in a moment.`);
       }
     } else {
       await loadGlobalUsage(false, { background: true });
@@ -710,12 +714,19 @@ function renderUsageTable(rows) {
     const rowCutoff = normalizeDateOnlyText(row.before_date);
     const isCutoffMismatch = Boolean(rowCutoff && selectedCutoff && rowCutoff !== selectedCutoff);
     const refreshingRow = state.usageRowRefreshInFlight.has(String(row.account_id));
+    const rowRefreshError = state.usageRowRefreshErrors.get(String(row.account_id));
     const staleSuffix = isCutoffMismatch
       ? (refreshingRow ? ' · refreshing selected cutoff...' : ' · stale for selected cutoff')
       : '';
     meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}${rowCutoff ? ` · Cutoff: ${rowCutoff}` : ''}${staleSuffix}`;
     if (isCutoffMismatch && !refreshingRow) {
       meta.classList.add('usage-cutoff-stale');
+    }
+    if (rowRefreshError) {
+      const errSpan = document.createElement('span');
+      errSpan.className = 'usage-row-error';
+      errSpan.textContent = `Scan error: ${rowRefreshError}`;
+      identity.appendChild(errSpan);
     }
     identity.appendChild(title);
     identity.appendChild(meta);

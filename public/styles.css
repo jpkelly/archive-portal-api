@@ -386,6 +386,14 @@ input {
   font-weight: 600;
 }
 
+.usage-identity .usage-row-error {
+  display: block;
+  font-size: 0.72rem;
+  color: #b00020;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
 .usage-totals {
   display: grid;
   grid-template-columns: repeat(5, auto);
