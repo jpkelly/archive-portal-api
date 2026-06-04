@@ -143,6 +143,61 @@ function formatClock(value) {
   return new Date(value).toLocaleTimeString();
 }
 
+function setupEnhancedDatePickers() {
+  const dateInputs = Array.from(document.querySelectorAll('.js-date-picker'));
+  if (!dateInputs.length) return;
+
+  if (typeof window.flatpickr !== 'function') {
+    // Fallback to native pickers if the enhancement library fails to load.
+    dateInputs.forEach((input) => {
+      input.addEventListener('focus', () => {
+        if (typeof input.showPicker === 'function') {
+          try {
+            input.showPicker();
+          } catch (_) {
+            // Ignore; native picker behavior varies by browser.
+          }
+        }
+      });
+    });
+    return;
+  }
+
+  const commonPickerOptions = {
+    dateFormat: 'Y-m-d',
+    allowInput: true,
+    disableMobile: true,
+    monthSelectorType: 'static',
+    onReady: (selectedDates, dateStr, instance) => {
+      if (!instance || !instance.calendarContainer) return;
+      if (instance.calendarContainer.querySelector('.fp-today-btn')) return;
+
+      const footer = document.createElement('div');
+      footer.className = 'fp-footer-actions';
+
+      const todayBtn = document.createElement('button');
+      todayBtn.type = 'button';
+      todayBtn.className = 'fp-today-btn';
+      todayBtn.textContent = 'Today';
+      todayBtn.addEventListener('click', () => {
+        const now = new Date();
+        instance.setDate(now, true, 'Y-m-d');
+        instance.close();
+      });
+
+      footer.appendChild(todayBtn);
+      instance.calendarContainer.appendChild(footer);
+    },
+  };
+
+  dateInputs.forEach((input) => {
+    window.flatpickr(input, {
+      ...commonPickerOptions,
+      defaultDate: input.value || null,
+    });
+  });
+}
+
 function setAdminUsageStatus(text) {
   if (!els.adminUsageStatus) return;
   els.adminUsageStatus.textContent = text || 'No usage data loaded yet.';
@@ -2147,6 +2202,7 @@ if (els.adminUsageBeforeDate) {
 }
 
 updateUsageBusyUi();
+setupEnhancedDatePickers();
 
 if (els.adminUsageRefreshBtn) {
   els.adminUsageRefreshBtn.addEventListener('click', async () => {

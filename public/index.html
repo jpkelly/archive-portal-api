@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Archive Portal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -68,11 +69,11 @@
               <input id="messageSearch" type="text" placeholder="Filter subject or sender..." />
               <label class="inline-filter">
                 From
-                <input id="messageDateFrom" type="date" />
+                <input id="messageDateFrom" class="js-date-picker" type="date" />
               </label>
               <label class="inline-filter">
                 To
-                <input id="messageDateTo" type="date" />
+                <input id="messageDateTo" class="js-date-picker" type="date" />
               </label>
               <button id="messageSearchBtn" class="button ghost" type="button">Search</button>
               <button id="messageResetBtn" class="button ghost" type="button">Reset</button>
@@ -170,7 +171,7 @@
           <div class="admin-grid" style="margin-top: 0;">
             <label title="Treat messages older than this date as reclaimable for planning purposes.">
               Reclaim Cutoff (Before Date)
-              <input id="adminUsageBeforeDate" type="date" />
+              <input id="adminUsageBeforeDate" class="js-date-picker" type="date" />
             </label>
             <div class="admin-actions" style="gap: 8px; align-items: center;">
               <button id="adminUsageRefreshBtn" class="button ghost" type="button" title="Refresh usage table from cached database data.">Refresh Usage</button>
@@ -207,17 +208,17 @@
 
             <label id="adminArchiveBeforeWrap" title="Archive all messages received before this date">
               Before Date
-              <input id="adminArchiveBeforeDate" type="date" />
+              <input id="adminArchiveBeforeDate" class="js-date-picker" type="date" />
             </label>
 
             <label id="adminArchiveFromWrap" class="hidden" title="Start of the date range to archive (inclusive)">
               From Date
-              <input id="adminArchiveFromDate" type="date" />
+              <input id="adminArchiveFromDate" class="js-date-picker" type="date" />
             </label>
 
             <label id="adminArchiveToWrap" class="hidden" title="End of the date range to archive (inclusive)">
               To Date
-              <input id="adminArchiveToDate" type="date" />
+              <input id="adminArchiveToDate" class="js-date-picker" type="date" />
             </label>
           </div>
 
@@ -239,6 +240,7 @@
       <p id="status" class="status"></p>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="/app.js"></script>
   </body>
 </html>

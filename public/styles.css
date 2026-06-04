@@ -74,6 +74,35 @@ input {
   border: 1px solid var(--border);
 }
 
+.flatpickr-calendar {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.fp-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 8px 8px;
+  border-top: 1px solid #e6ebf2;
+}
+
+.fp-today-btn {
+  border: 1px solid #c3d4e6;
+  background: #eef6fc;
+  color: #1f4d72;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.fp-today-btn:hover {
+  background: #deecf8;
+}
+
 .button {
   border: 0;
   border-radius: 8px;
