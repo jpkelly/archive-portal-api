@@ -1119,8 +1119,10 @@ async function loadGlobalUsage(scan = false, options = {}) {
     params.set('_ts', String(Date.now()));
     const data = await api(`/domains/usage?${params.toString()}`);
     const incomingRows = Array.isArray(data.usage) ? data.usage : [];
-    // Protect against transient empty responses racing with concurrent refreshes.
-    if (incomingRows.length === 0 && state.usageRows.length > 0 && !scan) {
+    // Protect against transient empty responses racing with concurrent refreshes
+    // or scans. A scan request can momentarily return no rows while many domains
+    // are being queued under load; never blank out rows we already have.
+    if (incomingRows.length === 0 && state.usageRows.length > 0) {
       setAdminUsageStatus('Usage refresh returned no rows temporarily; keeping previous rows. Try refresh again if this persists.');
     } else {
       state.usageRows = incomingRows;
