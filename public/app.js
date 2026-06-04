@@ -834,7 +834,6 @@ async function refreshUsageRow(row) {
       body: JSON.stringify({ beforeDate }),
     });
     if (result && result.queued) {
-      startUsageRefreshPolling();
       setAdminUsageStatus(`Refreshing ${row.username} in background for cutoff ${beforeDate}.`);
       const outcome = await waitForUsageRowRefresh(row, beforeDate);
       if (outcome.state === 'updated') {
