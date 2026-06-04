@@ -72,6 +72,9 @@ const state = {
   usageRowRefreshStartedAt: new Map(),
   usageRowRefreshTargetCutoff: new Map(),
   usageRowRefreshOutcome: new Map(),
+  usageRowBulkScanPending: new Set(),
+  usageRowBulkBaseline: new Map(),
+  usageBulkScanCutoff: '',
 };
 
 function defaultUsageBeforeDate() {
@@ -289,6 +292,60 @@ function isBulkDomainScanProgress(progress) {
   if (msg.startsWith('refreshing ')) return false;
   if (msg.includes('scanning ') || msg.includes('queued usage scan')) return true;
   return Number(progress.total || 0) > 1;
+}
+
+function rowScannedAtMs(row) {
+  if (!row || !row.scanned_at) return 0;
+  const ms = Date.parse(row.scanned_at);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+// Mark a set of rows as part of an in-progress bulk scan. Clears any existing
+// completion badge for those rows so the green badge disappears until each row
+// is rescanned, and records each row's current scanned_at as a baseline so we
+// can detect genuine completion as scanned_at advances during polling.
+function beginBulkScanTracking(accountIds, cutoff) {
+  state.usageBulkScanCutoff = normalizeDateOnlyText(cutoff) || '';
+  const rowsById = new Map(state.usageRows.map((row) => [String(row.account_id), row]));
+  accountIds.forEach((rawId) => {
+    const accountId = String(rawId);
+    state.usageRowRefreshOutcome.delete(accountId);
+    state.usageRowBulkScanPending.add(accountId);
+    state.usageRowBulkBaseline.set(accountId, rowScannedAtMs(rowsById.get(accountId)));
+  });
+}
+
+// As bulk-scan rows complete (scanned_at advances and cutoff matches), set the
+// per-row completion badge. When forceFinalize is true (scan no longer running)
+// resolve any rows still pending so spinners do not hang indefinitely.
+function reconcileBulkScan(forceFinalize = false) {
+  if (state.usageRowBulkScanPending.size === 0) return;
+  const cutoff = state.usageBulkScanCutoff;
+  const rowsById = new Map(state.usageRows.map((row) => [String(row.account_id), row]));
+  Array.from(state.usageRowBulkScanPending).forEach((accountId) => {
+    const row = rowsById.get(accountId);
+    if (!row) {
+      if (forceFinalize) {
+        state.usageRowBulkScanPending.delete(accountId);
+        state.usageRowBulkBaseline.delete(accountId);
+      }
+      return;
+    }
+    const baseline = Number(state.usageRowBulkBaseline.get(accountId) || 0);
+    const advanced = rowScannedAtMs(row) > baseline;
+    if (!advanced && !forceFinalize) return;
+    const rowCutoff = normalizeDateOnlyText(row.before_date);
+    const hasError = Boolean(row.error || row.scan_error);
+    const cutoffMatches = cutoff ? rowCutoff === cutoff : true;
+    state.usageRowRefreshOutcome.set(accountId, {
+      state: !hasError && cutoffMatches ? 'completed' : 'failed',
+      at: rowScannedAtMs(row) || Date.now(),
+      cutoff: cutoff || rowCutoff,
+      message: hasError ? String(row.error || row.scan_error) : undefined,
+    });
+    state.usageRowBulkScanPending.delete(accountId);
+    state.usageRowBulkBaseline.delete(accountId);
+  });
 }
 
 function setUsageButtonBusy(buttonEl, busy, busyText) {
@@ -928,6 +985,8 @@ function renderUsageTable(rows) {
       && String(row.domain_id) === selectedDomainId
       && isBulkDomainScanProgress(domainProgress)
     );
+    const rowBulkScanning = state.usageRowBulkScanPending.has(accountId);
+    const rowScanning = rowBulkScanning || domainScanRunning;
     const progressDone = Number(domainProgress && domainProgress.done || 0);
     const progressTotal = Number(domainProgress && domainProgress.total || 0);
     const progressFraction = progressTotal > 0 ? `${Math.min(progressDone, progressTotal)}/${progressTotal}` : 'working';
@@ -939,13 +998,13 @@ function renderUsageTable(rows) {
     const staleSuffix = isCutoffMismatch
       ? (refreshingRow
         ? ' · refreshing selected cutoff...'
-        : (domainScanRunning ? ' · scanning selected domain...' : ' · stale for selected cutoff'))
+        : (rowScanning ? ' · scanning selected cutoff...' : ' · stale for selected cutoff'))
       : '';
     meta.textContent = `Files: ${Number(row.total_files || 0).toLocaleString()} · Scanned: ${scanned}${rowCutoff ? ` · Cutoff: ${rowCutoff}` : ''}${staleSuffix}`;
-    if (isCutoffMismatch && !refreshingRow && !domainScanRunning) {
+    if (isCutoffMismatch && !refreshingRow && !rowScanning) {
       meta.classList.add('usage-cutoff-stale');
     }
-    if (domainScanRunning) {
+    if (rowScanning) {
       item.classList.add('usage-row-scanning');
     }
     identity.appendChild(title);
@@ -957,11 +1016,12 @@ function renderUsageTable(rows) {
       progressSpan.textContent = `Refreshing for ${rowProgressCutoff || rowRefreshTargetCutoff} · ${progressFraction} · ${rowElapsed}${progressMessage}`;
       identity.appendChild(progressSpan);
     }
-    if (!refreshingRow && domainScanRunning) {
+    if (!refreshingRow && rowScanning) {
       const progressSpan = document.createElement('span');
       progressSpan.className = 'usage-row-progress';
       const progressMessage = domainProgress && domainProgress.message ? ` · ${domainProgress.message}` : '';
-      progressSpan.textContent = `Scanning selected domain for ${rowProgressCutoff || selectedCutoff} · ${progressFraction}${domainElapsed ? ` · ${domainElapsed}` : ''}${progressMessage}`;
+      const scanCutoff = state.usageBulkScanCutoff || rowProgressCutoff || selectedCutoff;
+      progressSpan.textContent = `Scanning for ${scanCutoff} · ${progressFraction}${domainElapsed ? ` · ${domainElapsed}` : ''}${progressMessage}`;
       identity.appendChild(progressSpan);
     }
     if (!refreshingRow && rowRefreshOutcome) {
@@ -1039,6 +1099,8 @@ async function loadGlobalUsage(scan = false, options = {}) {
     const runningScanExists = Object.values(state.usageScanStatus || {}).some(
       (progress) => progress && progress.status === 'running'
     );
+    reconcileBulkScan(!runningScanExists);
+    renderUsageTable(state.usageRows);
     if (runningScanExists) {
       startUsageRefreshPolling();
     } else {
@@ -1091,6 +1153,8 @@ async function loadDomainUsage(scan = false) {
         domain_id: state.selectedDomain.id,
         domain_name: state.selectedDomain.name,
       }));
+      const domainScanRunning = Boolean(data.progress && data.progress.status === 'running');
+      reconcileBulkScan(!domainScanRunning);
       renderUsageTable(state.usageRows);
     }
 
@@ -2351,6 +2415,12 @@ if (els.adminUsageScanDomainBtn) {
       return;
     }
     try {
+      const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
+      const domainAccountIds = state.usageRows
+        .filter((row) => String(row.domain_id) === String(state.selectedDomain.id))
+        .map((row) => row.account_id);
+      beginBulkScanTracking(domainAccountIds, cutoff);
+      renderUsageTable(state.usageRows);
       await loadDomainUsage(true);
       await loadGlobalUsage(false).catch(() => {});
     } catch (err) {
@@ -2362,6 +2432,10 @@ if (els.adminUsageScanDomainBtn) {
 if (els.adminUsageScanAllBtn) {
   els.adminUsageScanAllBtn.addEventListener('click', async () => {
     try {
+      const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
+      const allAccountIds = state.usageRows.map((row) => row.account_id);
+      beginBulkScanTracking(allAccountIds, cutoff);
+      renderUsageTable(state.usageRows);
       await loadGlobalUsage(true);
     } catch (err) {
       setStatus(`Global usage scan failed: ${err.message}`);
