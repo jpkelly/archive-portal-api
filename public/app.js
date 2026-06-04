@@ -820,9 +820,9 @@ function renderUsageTable(rows) {
     const totals = document.createElement('div');
     totals.className = 'usage-totals';
     totals.innerHTML = `
-      <span title=">3 years">${formatBytes(row.bucket_gt3y_bytes)} old</span>
-      <span title="1-3 years">${formatBytes(row.bucket_1y_to_3y_bytes)} mid</span>
-      <span title="<1 year">${formatBytes(row.bucket_lt1y_bytes)} new</span>
+      <span title=">3 years">${formatBytes(row.bucket_gt3y_bytes)} 3y+</span>
+      <span title="1-3 years">${formatBytes(row.bucket_1y_to_3y_bytes)} 1-3y</span>
+      <span title="<1 year">${formatBytes(row.bucket_lt1y_bytes)} <1y</span>
       <strong>${formatBytes(row.total_bytes)}</strong>
       <em>Reclaim: ${formatBytes(row.reclaimable_bytes)}</em>
     `;
