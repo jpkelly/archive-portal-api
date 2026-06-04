@@ -123,6 +123,10 @@ function normalizeDateOnlyText(value) {
   return String(value).slice(0, 10);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function setAdminUsageStatus(text) {
   if (!els.adminUsageStatus) return;
   els.adminUsageStatus.textContent = text || 'No usage data loaded yet.';
@@ -584,11 +588,19 @@ async function refreshUsageRow(row) {
       method: 'POST',
       body: JSON.stringify({ beforeDate }),
     });
-    await loadGlobalUsage(false, { background: true });
     if (result && result.queued) {
       startUsageRefreshPolling();
       setAdminUsageStatus(`Refreshing ${row.username} in background for cutoff ${beforeDate}.`);
+      const outcome = await waitForUsageRowRefresh(row, beforeDate);
+      if (outcome.state === 'updated') {
+        setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
+      } else if (outcome.state === 'failed') {
+        setStatus(`Row usage refresh failed: ${outcome.message || 'unknown error'}`);
+      } else {
+        setAdminUsageStatus(`Refresh still running for ${row.username}. The row will update when scan data arrives.`);
+      }
     } else {
+      await loadGlobalUsage(false, { background: true });
       setAdminUsageStatus(`Refreshed ${row.username} for cutoff ${beforeDate}.`);
     }
   } catch (err) {
@@ -597,6 +609,39 @@ async function refreshUsageRow(row) {
     state.usageRowRefreshInFlight.delete(id);
     renderUsageTable(state.usageRows);
   }
+}
+
+async function waitForUsageRowRefresh(row, beforeDate) {
+  const accountId = String(row.account_id);
+  const domainId = String(row.domain_id);
+  const targetCutoff = normalizeDateOnlyText(beforeDate);
+  const start = Date.now();
+  const timeoutMs = 90000;
+
+  while (Date.now() - start < timeoutMs) {
+    await loadGlobalUsage(false, { background: true });
+
+    const refreshedRow = (state.usageRows || []).find((r) => String(r.account_id) === accountId);
+    const refreshedCutoff = normalizeDateOnlyText(refreshedRow && refreshedRow.before_date);
+    if (refreshedRow && refreshedCutoff && refreshedCutoff === targetCutoff) {
+      return { state: 'updated' };
+    }
+
+    const scan = (state.usageScanStatus && (state.usageScanStatus[domainId] || state.usageScanStatus[row.domain_id])) || null;
+    if (scan && scan.status === 'failed') {
+      return { state: 'failed', message: scan.message || 'scan failed' };
+    }
+    if (scan && scan.status === 'completed' && refreshedRow) {
+      return {
+        state: 'failed',
+        message: `refresh completed but cutoff is still ${refreshedCutoff || 'unknown'} (expected ${targetCutoff})`,
+      };
+    }
+
+    await delay(2000);
+  }
+
+  return { state: 'timeout' };
 }
 
 function renderUsageTable(rows) {
