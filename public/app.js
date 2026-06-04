@@ -28,6 +28,8 @@ const state = {
   usageBusyLabel: '',
   usageRowRefreshInFlight: new Set(),
   usageRowRefreshErrors: new Map(),
+  usageRowRefreshStartedAt: new Map(),
+  usageRowRefreshTargetCutoff: new Map(),
 };
 
 function defaultUsageBeforeDate() {
@@ -126,6 +128,13 @@ function normalizeDateOnlyText(value) {
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatElapsed(ms) {
+  const totalSeconds = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 function setAdminUsageStatus(text) {
@@ -582,9 +591,11 @@ async function refreshUsageRow(row) {
   if (state.usageRowRefreshInFlight.has(id)) return;
 
   state.usageRowRefreshInFlight.add(id);
+  state.usageRowRefreshStartedAt.set(id, Date.now());
   renderUsageTable(state.usageRows);
   try {
     const beforeDate = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
+    state.usageRowRefreshTargetCutoff.set(id, normalizeDateOnlyText(beforeDate));
     const result = await api(`/domains/${row.domain_id}/usage/${row.account_id}/refresh`, {
       method: 'POST',
       body: JSON.stringify({ beforeDate }),
@@ -611,6 +622,8 @@ async function refreshUsageRow(row) {
     setStatus(`Row usage refresh failed: ${err.message}`);
   } finally {
     state.usageRowRefreshInFlight.delete(id);
+    state.usageRowRefreshStartedAt.delete(id);
+    state.usageRowRefreshTargetCutoff.delete(id);
     renderUsageTable(state.usageRows);
   }
 }
@@ -626,6 +639,10 @@ async function waitForUsageRowRefresh(row, beforeDate) {
   while (Date.now() - start < timeoutMs) {
     const params = new URLSearchParams({ beforeDate: targetCutoff, _ts: String(Date.now()) });
     const data = await api(`/domains/${domainId}/usage?${params.toString()}`);
+    if (data && data.progress) {
+      state.usageScanStatus = state.usageScanStatus || {};
+      state.usageScanStatus[domainId] = data.progress;
+    }
     const refreshedRow = Array.isArray(data && data.usage)
       ? data.usage.find((r) => String(r.account_id) === accountId)
       : null;
@@ -718,8 +735,17 @@ function renderUsageTable(rows) {
     const scanned = row.scanned_at ? new Date(row.scanned_at).toLocaleString() : 'never';
     const rowCutoff = normalizeDateOnlyText(row.before_date);
     const isCutoffMismatch = Boolean(rowCutoff && selectedCutoff && rowCutoff !== selectedCutoff);
-    const refreshingRow = state.usageRowRefreshInFlight.has(String(row.account_id));
-    const rowRefreshError = state.usageRowRefreshErrors.get(String(row.account_id));
+    const accountId = String(row.account_id);
+    const refreshingRow = state.usageRowRefreshInFlight.has(accountId);
+    const rowRefreshError = state.usageRowRefreshErrors.get(accountId);
+    const rowRefreshStartedAt = state.usageRowRefreshStartedAt.get(accountId) || Date.now();
+    const rowRefreshTargetCutoff = state.usageRowRefreshTargetCutoff.get(accountId) || selectedCutoff;
+    const domainProgress = state.usageScanStatus && state.usageScanStatus[String(row.domain_id)];
+    const progressDone = Number(domainProgress && domainProgress.done || 0);
+    const progressTotal = Number(domainProgress && domainProgress.total || 0);
+    const progressFraction = progressTotal > 0 ? `${Math.min(progressDone, progressTotal)}/${progressTotal}` : 'working';
+    const rowElapsed = formatElapsed(Date.now() - rowRefreshStartedAt);
+    const rowProgressCutoff = normalizeDateOnlyText((domainProgress && domainProgress.beforeDate) || rowRefreshTargetCutoff);
     const staleSuffix = isCutoffMismatch
       ? (refreshingRow ? ' · refreshing selected cutoff...' : ' · stale for selected cutoff')
       : '';
@@ -727,14 +753,21 @@ function renderUsageTable(rows) {
     if (isCutoffMismatch && !refreshingRow) {
       meta.classList.add('usage-cutoff-stale');
     }
+    identity.appendChild(title);
+    identity.appendChild(meta);
+    if (refreshingRow) {
+      const progressSpan = document.createElement('span');
+      progressSpan.className = 'usage-row-progress';
+      const progressMessage = domainProgress && domainProgress.message ? ` · ${domainProgress.message}` : '';
+      progressSpan.textContent = `Refreshing for ${rowProgressCutoff || rowRefreshTargetCutoff} · ${progressFraction} · ${rowElapsed}${progressMessage}`;
+      identity.appendChild(progressSpan);
+    }
     if (rowRefreshError) {
       const errSpan = document.createElement('span');
       errSpan.className = 'usage-row-error';
       errSpan.textContent = `Scan error: ${rowRefreshError}`;
       identity.appendChild(errSpan);
     }
-    identity.appendChild(title);
-    identity.appendChild(meta);
 
     const totals = document.createElement('div');
     totals.className = 'usage-totals';

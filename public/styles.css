@@ -394,6 +394,36 @@ input {
   margin-top: 2px;
 }
 
+.usage-identity .usage-row-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  font-size: 0.72rem;
+  color: #0e5b8b;
+  font-weight: 600;
+  margin-top: 2px;
+  padding: 2px 7px;
+  border: 1px solid #c2ddee;
+  border-radius: 999px;
+  background: #eef6fb;
+}
+
+.usage-identity .usage-row-progress::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid #7eb2d2;
+  border-top-color: #0e6ba8;
+  animation: usageSpin 0.8s linear infinite;
+}
+
+@keyframes usageSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .usage-totals {
   display: grid;
   grid-template-columns: repeat(5, auto);
