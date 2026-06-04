@@ -1146,10 +1146,12 @@ router.get('/usage', async (req, res) => {
 
     const beforeDate = normalizeUsageBeforeDate(req.query.beforeDate);
     const shouldScan = String(req.query.scan || '').toLowerCase() === 'true';
+    const scanQueuedDomainIds = [];
     if (shouldScan) {
       const domains = await query('SELECT id FROM domains ORDER BY name ASC');
       for (const d of domains) {
-        await queueDomainUsageScan(d.id, beforeDate);
+        const queued = await queueDomainUsageScan(d.id, beforeDate);
+        if (queued) scanQueuedDomainIds.push(String(d.id));
       }
     }
 
@@ -1199,6 +1201,8 @@ router.get('/usage', async (req, res) => {
       ok: true,
       beforeDate,
       scans,
+      scanRequested: shouldScan,
+      scanQueuedDomainIds,
       usage: rows,
       domains: domainRollups,
     });
@@ -1222,8 +1226,9 @@ router.get('/:domainId/usage', async (req, res) => {
 
     const beforeDate = normalizeUsageBeforeDate(req.query.beforeDate);
     const shouldScan = String(req.query.scan || '').toLowerCase() === 'true';
+    let scanQueued = false;
     if (shouldScan) {
-      await queueDomainUsageScan(domainId, beforeDate);
+      scanQueued = await queueDomainUsageScan(domainId, beforeDate);
     }
 
     const rows = await query(
@@ -1252,6 +1257,8 @@ router.get('/:domainId/usage', async (req, res) => {
       ok: true,
       domain: { id: domain.id, name: domain.name },
       beforeDate,
+      scanRequested: shouldScan,
+      scanQueued,
       scanning: Boolean(progress && progress.status === 'running'),
       progress,
       usage: rows,

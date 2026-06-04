@@ -1120,6 +1120,17 @@ async function loadGlobalUsage(scan = false, options = {}) {
     }
     state.usageDomainRollups = data.domains || [];
     state.usageScanStatus = data.scans || null;
+    if (scan) {
+      const queuedDomainIds = new Set(
+        Array.isArray(data.scanQueuedDomainIds) ? data.scanQueuedDomainIds.map((id) => String(id)) : []
+      );
+      if (queuedDomainIds.size > 0) {
+        const queuedAccountIds = state.usageRows
+          .filter((row) => queuedDomainIds.has(String(row.domain_id)))
+          .map((row) => row.account_id);
+        beginBulkScanTracking(queuedAccountIds, beforeDate);
+      }
+    }
     renderUsageTable(state.usageRows);
 
     const runningScanExists = Object.values(state.usageScanStatus || {}).some(
@@ -1144,7 +1155,12 @@ async function loadGlobalUsage(scan = false, options = {}) {
     const hasCutoffMismatch = rowCutoffs.length > 0 && rowCutoffs.some((d) => d !== beforeDate);
     const refreshedAt = new Date().toLocaleTimeString();
     if (scan) {
-      setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
+      const queuedCount = Array.isArray(data.scanQueuedDomainIds) ? data.scanQueuedDomainIds.length : 0;
+      if (queuedCount > 0) {
+        setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate} across ${queuedCount} domains. Last refresh ${refreshedAt}.`);
+      } else {
+        setAdminUsageStatus(`Scan already running; joined existing batch for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
+      }
     } else if (activeDomainScan && activeDomainScan.status === 'running') {
       setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
     } else if (hasCutoffMismatch) {
@@ -1179,6 +1195,10 @@ async function loadDomainUsage(scan = false) {
         domain_id: state.selectedDomain.id,
         domain_name: state.selectedDomain.name,
       }));
+      if (scan && data.scanQueued) {
+        const domainAccountIds = state.usageRows.map((row) => row.account_id);
+        beginBulkScanTracking(domainAccountIds, beforeDate);
+      }
       const domainScanRunning = Boolean(data.progress && data.progress.status === 'running');
       reconcileBulkScan(!domainScanRunning);
       renderUsageTable(state.usageRows);
@@ -1192,9 +1212,13 @@ async function loadDomainUsage(scan = false) {
     ));
     const hasCutoffMismatch = rowCutoffs.length > 0 && rowCutoffs.some((d) => d !== beforeDate);
     if (scan) {
-      setAdminUsageStatus(data.progress && data.progress.message
-        ? data.progress.message
-        : `Usage scan queued for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
+      if (data.scanQueued) {
+        setAdminUsageStatus(data.progress && data.progress.message
+          ? data.progress.message
+          : `Usage scan queued for ${state.selectedDomain.name}. Last refresh ${refreshedAt}.`);
+      } else {
+        setAdminUsageStatus(`Scan already running for ${state.selectedDomain.name}; joined existing scan (${data.progress && data.progress.message ? data.progress.message : 'in progress'}). Last refresh ${refreshedAt}.`);
+      }
     } else if (data.progress && data.progress.status === 'running') {
       setAdminUsageStatus(`Running: ${data.progress.message || 'usage scan in progress'} (last refresh ${refreshedAt})`);
     } else if (hasCutoffMismatch) {
@@ -2441,12 +2465,6 @@ if (els.adminUsageScanDomainBtn) {
       return;
     }
     try {
-      const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
-      const domainAccountIds = state.usageRows
-        .filter((row) => String(row.domain_id) === String(state.selectedDomain.id))
-        .map((row) => row.account_id);
-      beginBulkScanTracking(domainAccountIds, cutoff);
-      renderUsageTable(state.usageRows);
       await loadDomainUsage(true);
       await loadGlobalUsage(false).catch(() => {});
     } catch (err) {
@@ -2458,10 +2476,6 @@ if (els.adminUsageScanDomainBtn) {
 if (els.adminUsageScanAllBtn) {
   els.adminUsageScanAllBtn.addEventListener('click', async () => {
     try {
-      const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
-      const allAccountIds = state.usageRows.map((row) => row.account_id);
-      beginBulkScanTracking(allAccountIds, cutoff);
-      renderUsageTable(state.usageRows);
       await loadGlobalUsage(true);
     } catch (err) {
       setStatus(`Global usage scan failed: ${err.message}`);
