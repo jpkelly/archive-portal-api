@@ -283,6 +283,14 @@ function updateSelectedDomainIndicator() {
   }
 }
 
+function isBulkDomainScanProgress(progress) {
+  if (!progress || progress.status !== 'running') return false;
+  const msg = String(progress.message || '').toLowerCase();
+  if (msg.startsWith('refreshing ')) return false;
+  if (msg.includes('scanning ') || msg.includes('queued usage scan')) return true;
+  return Number(progress.total || 0) > 1;
+}
+
 function setUsageButtonBusy(buttonEl, busy, busyText) {
   if (!buttonEl) return;
   if (!buttonEl.dataset.defaultText) {
@@ -918,8 +926,7 @@ function renderUsageTable(rows) {
     const domainScanRunning = Boolean(
       selectedDomainId
       && String(row.domain_id) === selectedDomainId
-      && domainProgress
-      && domainProgress.status === 'running'
+      && isBulkDomainScanProgress(domainProgress)
     );
     const progressDone = Number(domainProgress && domainProgress.done || 0);
     const progressTotal = Number(domainProgress && domainProgress.total || 0);
