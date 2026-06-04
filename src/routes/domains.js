@@ -403,6 +403,7 @@ async function queueDomainUsageScan(domainId, beforeDate) {
     total: accounts.length,
     done: 0,
     failed: 0,
+    activeAccountIds: [],
     beforeDate,
     startedAt: new Date().toISOString(),
   });
@@ -412,9 +413,21 @@ async function queueDomainUsageScan(domainId, beforeDate) {
       await ensureUsageTable();
       let done = 0;
       let failed = 0;
+      const activeAccountIds = new Set();
 
       await withConcurrency(
         accounts.map((account) => async () => {
+          const accountId = String(account.id);
+          activeAccountIds.add(accountId);
+          setUsageScanProgress(domainId, {
+            status: 'running',
+            message: `Scanning ${done + failed + 1}/${accounts.length}`,
+            total: accounts.length,
+            done,
+            failed,
+            activeAccountIds: Array.from(activeAccountIds),
+            beforeDate,
+          });
           try {
             await refreshAccountUsageSnapshot(domain, account, beforeDate);
             done += 1;
@@ -434,6 +447,8 @@ async function queueDomainUsageScan(domainId, beforeDate) {
               range,
               err.message
             ).catch(() => {});
+          } finally {
+            activeAccountIds.delete(accountId);
           }
 
           setUsageScanProgress(domainId, {
@@ -442,6 +457,7 @@ async function queueDomainUsageScan(domainId, beforeDate) {
             total: accounts.length,
             done,
             failed,
+            activeAccountIds: Array.from(activeAccountIds),
             beforeDate,
           });
         }),
@@ -454,6 +470,7 @@ async function queueDomainUsageScan(domainId, beforeDate) {
         total: accounts.length,
         done,
         failed,
+        activeAccountIds: [],
         beforeDate,
         completedAt: new Date().toISOString(),
       });

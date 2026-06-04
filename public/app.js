@@ -996,12 +996,18 @@ function renderUsageTable(rows) {
     const rowRefreshTargetCutoff = state.usageRowRefreshTargetCutoff.get(accountId) || selectedCutoff;
     const rowRefreshOutcome = state.usageRowRefreshOutcome.get(accountId);
     const domainProgress = state.usageScanStatus && state.usageScanStatus[String(row.domain_id)];
+    const activeBulkIds = new Set(
+      Array.isArray(domainProgress && domainProgress.activeAccountIds)
+        ? domainProgress.activeAccountIds.map((id) => String(id))
+        : []
+    );
     const domainScanRunning = Boolean(
       selectedDomainId
       && String(row.domain_id) === selectedDomainId
       && isBulkDomainScanProgress(domainProgress)
     );
     const rowBulkScanning = state.usageRowBulkScanPending.has(accountId);
+    const rowBulkActive = rowBulkScanning && activeBulkIds.has(accountId);
     const rowScanning = rowBulkScanning || domainScanRunning;
     const progressDone = Number(domainProgress && domainProgress.done || 0);
     const progressTotal = Number(domainProgress && domainProgress.total || 0);
@@ -1035,9 +1041,13 @@ function renderUsageTable(rows) {
     if (!refreshingRow && rowScanning) {
       const progressSpan = document.createElement('span');
       progressSpan.className = 'usage-row-progress';
-      const progressMessage = domainProgress && domainProgress.message ? ` · ${domainProgress.message}` : '';
       const scanCutoff = state.usageBulkScanCutoff || rowProgressCutoff || selectedCutoff;
-      progressSpan.textContent = `Scanning for ${scanCutoff} · ${progressFraction}${domainElapsed ? ` · ${domainElapsed}` : ''}${progressMessage}`;
+      if (rowBulkScanning) {
+        const rowStateLabel = rowBulkActive ? 'Scanning this mailbox' : 'Queued in batch';
+        progressSpan.textContent = `${rowStateLabel} for ${scanCutoff} · ${progressFraction}${domainElapsed ? ` · ${domainElapsed}` : ''}`;
+      } else {
+        progressSpan.textContent = `Domain scan running for ${scanCutoff} · ${progressFraction}${domainElapsed ? ` · ${domainElapsed}` : ''}`;
+      }
       identity.appendChild(progressSpan);
     }
     if (!refreshingRow && rowRefreshOutcome) {
