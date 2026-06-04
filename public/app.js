@@ -6,7 +6,40 @@ const UI_PREF_KEYS = {
   archiveToDate: 'archivePortalArchiveToDate',
   messageDateFrom: 'archivePortalMessageDateFrom',
   messageDateTo: 'archivePortalMessageDateTo',
+  usageAutoHeal: 'archivePortalUsageAutoHeal',
 };
+
+const INACTIVE_AUTOHEAL = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
+
+// Persist the Scan All Domains "keep converging" intent so a page reload (e.g.
+// after a cache-busted deploy) resumes the heal automatically instead of leaving
+// large mailboxes stuck at an old cutoff until the user clicks Scan All again.
+function getStoredAutoHeal() {
+  try {
+    const raw = localStorage.getItem(UI_PREF_KEYS.usageAutoHeal);
+    if (!raw) return { ...INACTIVE_AUTOHEAL };
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.active && isIsoDateOnly(parsed.cutoff)) {
+      // Resume with a fresh budget; a reload is effectively a new session.
+      return { active: true, cutoff: parsed.cutoff, attempts: 0, stalls: 0, lastStale: Infinity };
+    }
+  } catch (_) {
+    // Corrupt value; fall through to inactive.
+  }
+  return { ...INACTIVE_AUTOHEAL };
+}
+
+function setStoredAutoHeal(heal) {
+  try {
+    if (heal && heal.active && isIsoDateOnly(heal.cutoff)) {
+      localStorage.setItem(UI_PREF_KEYS.usageAutoHeal, JSON.stringify({ active: true, cutoff: heal.cutoff }));
+    } else {
+      localStorage.removeItem(UI_PREF_KEYS.usageAutoHeal);
+    }
+  } catch (_) {
+    // Ignore storage failures (private mode, quota, etc.).
+  }
+}
 
 function isIsoDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
@@ -75,7 +108,7 @@ const state = {
   usageRowBulkScanPending: new Set(),
   usageRowBulkBaseline: new Map(),
   usageBulkScanCutoff: '',
-  usageAutoHeal: { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 },
+  usageAutoHeal: getStoredAutoHeal(),
 };
 function defaultUsageBeforeDate() {
   const stored = getStoredDate(UI_PREF_KEYS.usageBeforeDate);
@@ -1214,15 +1247,18 @@ async function loadGlobalUsage(scan = false, options = {}) {
 
     if (healActive && !runningScanExists) {
       if (staleForTarget.length === 0) {
-        state.usageAutoHeal = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
+        state.usageAutoHeal = { ...INACTIVE_AUTOHEAL };
+        setStoredAutoHeal(state.usageAutoHeal);
       } else {
         const prevStale = typeof heal.lastStale === 'number' ? heal.lastStale : Infinity;
         const madeProgress = staleForTarget.length < prevStale;
         heal.stalls = madeProgress ? 0 : (heal.stalls || 0) + 1;
         heal.lastStale = staleForTarget.length;
+        setStoredAutoHeal(heal);
         if (heal.stalls > MAX_AUTOHEAL_STALLS) {
           // No progress across several passes; stop retrying to avoid a tight loop.
-          state.usageAutoHeal = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
+          state.usageAutoHeal = { ...INACTIVE_AUTOHEAL };
+          setStoredAutoHeal(state.usageAutoHeal);
         } else {
           const healAt = new Date().toLocaleTimeString();
           setAdminUsageStatus(formatGlobalScanProgress(beforeDate, healAt));
@@ -2569,9 +2605,11 @@ if (els.adminUsageScanAllBtn) {
     try {
       const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
       state.usageAutoHeal = { active: true, cutoff, attempts: 0, stalls: 0, lastStale: Infinity };
+      setStoredAutoHeal(state.usageAutoHeal);
       await loadGlobalUsage(true);
     } catch (err) {
-      state.usageAutoHeal = { active: false, cutoff: '', attempts: 0, stalls: 0, lastStale: 0 };
+      state.usageAutoHeal = { ...INACTIVE_AUTOHEAL };
+      setStoredAutoHeal(state.usageAutoHeal);
       setStatus(`Global usage scan failed: ${err.message}`);
     }
   });
@@ -2583,6 +2621,11 @@ if (els.adminUsageBeforeDate) {
     if (v) {
       state.usageBeforeDate = v;
       setStoredDate(UI_PREF_KEYS.usageBeforeDate, v);
+      // A new cutoff invalidates any in-progress heal for the old cutoff.
+      if (state.usageAutoHeal && state.usageAutoHeal.active && state.usageAutoHeal.cutoff !== v) {
+        state.usageAutoHeal = { ...INACTIVE_AUTOHEAL };
+        setStoredAutoHeal(state.usageAutoHeal);
+      }
       setAdminUsageStatus(`Cutoff changed to ${v}. Run Scan Selected Domain or Scan All Domains to recalculate reclaim values.`);
       renderUsageTable(state.usageRows);
     }
