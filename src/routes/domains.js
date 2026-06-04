@@ -410,7 +410,8 @@ async function upsertUsageSnapshot(accountId, domainId, report, range, error = n
   );
 }
 
-async function queueDomainUsageScan(domainId, beforeDate) {
+async function queueDomainUsageScan(domainId, beforeDate, options = {}) {
+  const onlyStale = Boolean(options && options.onlyStale);
   const existing = getUsageScanProgress(domainId);
   if (existing && existing.status === 'running') {
     return false;
@@ -423,10 +424,30 @@ async function queueDomainUsageScan(domainId, beforeDate) {
   }
 
   const range = buildBeforeRange(beforeDate);
-  const accounts = await query(
+  let accounts = await query(
     'SELECT id, username FROM mail_accounts WHERE domain_id = ? ORDER BY username ASC',
     [domainId]
   );
+
+  if (onlyStale) {
+    // Idempotent/self-healing scan: only (re)scan accounts that are not already
+    // at the requested cutoff with a clean result. This makes Scan All Domains
+    // converge quickly after an interrupted run instead of redoing everything.
+    const usageRows = await query(
+      'SELECT account_id, before_date, error FROM mail_usage WHERE domain_id = ?',
+      [domainId]
+    );
+    const freshByAccount = new Map();
+    for (const u of usageRows) {
+      const hasError = u.error !== null && u.error !== undefined && String(u.error) !== '';
+      const atCutoff = toDateOnly(u.before_date) === beforeDate;
+      freshByAccount.set(String(u.account_id), atCutoff && !hasError);
+    }
+    accounts = accounts.filter((account) => freshByAccount.get(String(account.id)) !== true);
+    if (accounts.length === 0) {
+      return false;
+    }
+  }
 
   setUsageScanProgress(domainId, {
     status: 'running',
@@ -1183,7 +1204,7 @@ router.get('/usage', async (req, res) => {
     if (shouldScan) {
       const domains = await query('SELECT id FROM domains ORDER BY name ASC');
       for (const d of domains) {
-        const queued = await queueDomainUsageScan(d.id, beforeDate);
+        const queued = await queueDomainUsageScan(d.id, beforeDate, { onlyStale: true });
         if (queued) scanQueuedDomainIds.push(String(d.id));
       }
     }

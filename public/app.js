@@ -75,8 +75,8 @@ const state = {
   usageRowBulkScanPending: new Set(),
   usageRowBulkBaseline: new Map(),
   usageBulkScanCutoff: '',
+  usageAutoHeal: { active: false, cutoff: '', attempts: 0 },
 };
-
 function defaultUsageBeforeDate() {
   const stored = getStoredDate(UI_PREF_KEYS.usageBeforeDate);
   if (stored) return stored;
@@ -1149,6 +1149,36 @@ async function loadGlobalUsage(scan = false, options = {}) {
       startUsageRefreshPolling();
     } else {
       stopUsageRefreshPolling();
+    }
+
+    // Self-healing convergence: a Scan All Domains run can be interrupted (e.g. a
+    // deploy/restart kills the in-memory scan), leaving some mailboxes at an old
+    // cutoff. When auto-heal is active and no scan is running but rows remain at a
+    // different cutoff, kick another pass. The backend only rescans stale/errored
+    // accounts, so each pass is cheap and convergence is guaranteed (errored rows
+    // adopt the target cutoff and stop counting as stale). The attempt cap is a
+    // safety net against pathological loops.
+    const MAX_AUTOHEAL_PASSES = 4;
+    const staleForTarget = state.usageRows.filter(
+      (row) => normalizeDateOnlyText(row.before_date) !== beforeDate
+    );
+    const heal = state.usageAutoHeal;
+    if (heal && heal.active && heal.cutoff === beforeDate && !runningScanExists) {
+      if (staleForTarget.length === 0) {
+        state.usageAutoHeal = { active: false, cutoff: '', attempts: 0 };
+      } else if (heal.attempts < MAX_AUTOHEAL_PASSES) {
+        heal.attempts += 1;
+        const healAt = new Date().toLocaleTimeString();
+        setAdminUsageStatus(`Finishing ${staleForTarget.length} remaining mailbox(es) for cutoff ${beforeDate} (pass ${heal.attempts} of ${MAX_AUTOHEAL_PASSES}). Last refresh ${healAt}.`);
+        try {
+          await loadGlobalUsage(true, { background: true });
+        } catch (_) {
+          // Keep polling; a transient failure should not abort the heal cycle.
+        }
+        return;
+      } else {
+        state.usageAutoHeal = { active: false, cutoff: '', attempts: 0 };
+      }
     }
 
     const activeDomainScan = state.selectedDomain && state.usageScanStatus
@@ -2483,8 +2513,11 @@ if (els.adminUsageScanDomainBtn) {
 if (els.adminUsageScanAllBtn) {
   els.adminUsageScanAllBtn.addEventListener('click', async () => {
     try {
+      const cutoff = (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate;
+      state.usageAutoHeal = { active: true, cutoff, attempts: 0 };
       await loadGlobalUsage(true);
     } catch (err) {
+      state.usageAutoHeal = { active: false, cutoff: '', attempts: 0 };
       setStatus(`Global usage scan failed: ${err.message}`);
     }
   });
