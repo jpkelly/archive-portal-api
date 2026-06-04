@@ -1102,6 +1102,46 @@ function renderUsageTable(rows) {
   });
 }
 
+// Aggregate progress of an in-flight Scan All Domains run. The backend reports
+// per-domain progress (done/failed/total/activeAccountIds) via data.scans, which
+// we mirror into state.usageScanStatus. This summarizes it across all domains so
+// the UI can show overall convergence toward the target cutoff plus which
+// mailboxes are scanning right now.
+function summarizeGlobalUsageProgress(beforeDate) {
+  const rows = Array.isArray(state.usageRows) ? state.usageRows : [];
+  const total = rows.length;
+  const atCutoff = rows.filter((row) => normalizeDateOnlyText(row.before_date) === beforeDate).length;
+  const remaining = Math.max(0, total - atCutoff);
+
+  const scans = state.usageScanStatus || {};
+  const activeIds = new Set();
+  let runningDomains = 0;
+  Object.values(scans).forEach((p) => {
+    if (p && p.status === 'running') {
+      runningDomains += 1;
+      (Array.isArray(p.activeAccountIds) ? p.activeAccountIds : []).forEach((id) => activeIds.add(String(id)));
+    }
+  });
+  const activeNames = rows
+    .filter((row) => activeIds.has(String(row.account_id)))
+    .map((row) => row.username);
+  return { total, atCutoff, remaining, runningDomains, activeNames };
+}
+
+function formatGlobalScanProgress(beforeDate, refreshedAt) {
+  const s = summarizeGlobalUsageProgress(beforeDate);
+  let msg = `Scan progress: ${s.atCutoff}/${s.total} mailboxes at cutoff ${beforeDate}`;
+  if (s.remaining > 0) msg += ` · ${s.remaining} remaining`;
+  if (s.runningDomains > 0) msg += ` · ${s.runningDomains} domain(s) scanning`;
+  if (s.activeNames.length > 0) {
+    const shown = s.activeNames.slice(0, 3).join(', ');
+    const extra = s.activeNames.length > 3 ? ` +${s.activeNames.length - 3} more` : '';
+    msg += ` · now: ${shown}${extra}`;
+  }
+  msg += `. Last refresh ${refreshedAt}.`;
+  return msg;
+}
+
 async function loadGlobalUsage(scan = false, options = {}) {
   if (!state.user || state.user.role !== 'admin') return;
   if (!els.adminUsageBeforeDate) return;
@@ -1171,7 +1211,7 @@ async function loadGlobalUsage(scan = false, options = {}) {
       } else if (heal.attempts < MAX_AUTOHEAL_PASSES) {
         heal.attempts += 1;
         const healAt = new Date().toLocaleTimeString();
-        setAdminUsageStatus(`Finishing ${staleForTarget.length} remaining mailbox(es) for cutoff ${beforeDate} (pass ${heal.attempts} of ${MAX_AUTOHEAL_PASSES}). Last refresh ${healAt}.`);
+        setAdminUsageStatus(`${formatGlobalScanProgress(beforeDate, healAt)} (heal pass ${heal.attempts}/${MAX_AUTOHEAL_PASSES})`);
         try {
           await loadGlobalUsage(true, { background: true });
         } catch (_) {
@@ -1193,13 +1233,12 @@ async function loadGlobalUsage(scan = false, options = {}) {
     ));
     const hasCutoffMismatch = rowCutoffs.length > 0 && rowCutoffs.some((d) => d !== beforeDate);
     const refreshedAt = new Date().toLocaleTimeString();
-    if (scan) {
-      const queuedCount = Array.isArray(data.scanQueuedDomainIds) ? data.scanQueuedDomainIds.length : 0;
-      if (queuedCount > 0) {
-        setAdminUsageStatus(`Usage scan queued for cutoff ${beforeDate} across ${queuedCount} domains. Last refresh ${refreshedAt}.`);
-      } else {
-        setAdminUsageStatus(`Scan already running; joined existing batch for cutoff ${beforeDate}. Last refresh ${refreshedAt}.`);
-      }
+    const globalScanInProgress = runningScanExists
+      || (state.usageAutoHeal && state.usageAutoHeal.active && state.usageAutoHeal.cutoff === beforeDate);
+    if (scan || globalScanInProgress) {
+      // A Scan All Domains run is in flight (just queued, still running, or
+      // mid auto-heal). Show live aggregate progress toward the target cutoff.
+      setAdminUsageStatus(formatGlobalScanProgress(beforeDate, refreshedAt));
     } else if (activeDomainScan && activeDomainScan.status === 'running') {
       setAdminUsageStatus(`Domain scan running: ${activeDomainScan.message || 'in progress'} (last refresh ${refreshedAt})`);
     } else if (hasCutoffMismatch) {
