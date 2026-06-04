@@ -474,14 +474,18 @@ async function queueDomainUsageScan(domainId, beforeDate) {
 
 async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
   const range = buildBeforeRange(beforeDate);
-  const usernameLocal = String(account.username || '').split('@')[0];
+  // qmail mailname directories on disk are always lowercase, while DB usernames
+  // may be stored mixed-case (e.g. Lexi@domain). Lowercase the local part and
+  // domain so the report script can locate the Maildir.
+  const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
+  const domainName = String(domain.name || '').toLowerCase();
   const { stdout } = await execFileAsync(
     'sudo',
     [
       'bash',
       '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
       'report',
-      domain.name,
+      domainName,
       usernameLocal,
       range.fromDate,
       range.toDate,

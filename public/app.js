@@ -333,9 +333,25 @@ function reconcileBulkScan(forceFinalize = false) {
     }
     const baseline = Number(state.usageRowBulkBaseline.get(accountId) || 0);
     const advanced = rowScannedAtMs(row) > baseline;
-    if (!advanced && !forceFinalize) return;
     const rowCutoff = normalizeDateOnlyText(row.before_date);
     const hasError = Boolean(row.error || row.scan_error);
+    if (!advanced && !forceFinalize) return;
+    if (!advanced && forceFinalize) {
+      // Row was never rescanned in this pass. Only surface a badge if the DB
+      // actually recorded an error for it; otherwise clear it silently so we
+      // don't show a false "completed with error".
+      if (hasError) {
+        state.usageRowRefreshOutcome.set(accountId, {
+          state: 'failed',
+          at: rowScannedAtMs(row) || Date.now(),
+          cutoff: rowCutoff || cutoff,
+          message: String(row.error || row.scan_error),
+        });
+      }
+      state.usageRowBulkScanPending.delete(accountId);
+      state.usageRowBulkBaseline.delete(accountId);
+      return;
+    }
     const cutoffMatches = cutoff ? rowCutoff === cutoff : true;
     state.usageRowRefreshOutcome.set(accountId, {
       state: !hasError && cutoffMatches ? 'completed' : 'failed',
