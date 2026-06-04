@@ -619,7 +619,7 @@ async function waitForUsageRowRefresh(row, beforeDate) {
   const accountId = String(row.account_id);
   const domainId = String(row.domain_id);
   const targetCutoff = normalizeDateOnlyText(beforeDate);
-  const startedAtMs = row && row.scanned_at ? Date.parse(row.scanned_at) || Date.now() : Date.now();
+  const originalScannedMs = row && row.scanned_at ? (Date.parse(row.scanned_at) || 0) : 0;
   const start = Date.now();
   const timeoutMs = 120000;
 
@@ -646,15 +646,20 @@ async function waitForUsageRowRefresh(row, beforeDate) {
     const refreshedScannedMs = refreshedRow && refreshedRow.scanned_at
       ? (Date.parse(refreshedRow.scanned_at) || 0)
       : 0;
-    if (refreshedRow && refreshedCutoff && refreshedCutoff === targetCutoff) {
-      return { state: 'updated' };
-    }
+    // Only treat the scan as finished once scanned_at advances past the value
+    // we started from. Until then the row still shows the previous snapshot and
+    // we must keep polling rather than declare a (false) cutoff mismatch.
+    const scanAdvanced = refreshedScannedMs > originalScannedMs;
 
-    if (refreshedRow && refreshedRow.error && refreshedScannedMs >= startedAtMs) {
+    if (refreshedRow && scanAdvanced && refreshedRow.error) {
       return { state: 'failed', message: refreshedRow.error };
     }
 
-    if (refreshedRow && refreshedScannedMs >= startedAtMs && refreshedCutoff && refreshedCutoff !== targetCutoff) {
+    if (refreshedRow && scanAdvanced && refreshedCutoff && refreshedCutoff === targetCutoff) {
+      return { state: 'updated' };
+    }
+
+    if (refreshedRow && scanAdvanced && refreshedCutoff && refreshedCutoff !== targetCutoff) {
       return {
         state: 'failed',
         message: `refresh completed but cutoff is still ${refreshedCutoff || 'unknown'} (expected ${targetCutoff})`,
