@@ -330,6 +330,32 @@ input {
   word-break: break-word;
 }
 
+.usage-domain-indicator {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #c8d7e7;
+  border-radius: 999px;
+  background: #eef5fc;
+  color: #214664;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+
+.usage-domain-indicator::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5f8db3;
+}
+
+.usage-domain-indicator.active::before {
+  background: #1c8c43;
+}
+
 .usage-table {
   border: 1px solid var(--border);
   border-radius: 8px;

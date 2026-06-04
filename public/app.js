@@ -102,6 +102,7 @@ const els = {
   adminUsageRefreshBtn: document.getElementById('adminUsageRefreshBtn'),
   adminUsageScanDomainBtn: document.getElementById('adminUsageScanDomainBtn'),
   adminUsageScanAllBtn: document.getElementById('adminUsageScanAllBtn'),
+  adminUsageDomainIndicator: document.getElementById('adminUsageDomainIndicator'),
   adminUsageStatus: document.getElementById('adminUsageStatus'),
   adminUsageTable: document.getElementById('adminUsageTable'),
   portalTabs: document.getElementById('portalTabs'),
@@ -201,6 +202,21 @@ function setupEnhancedDatePickers() {
 function setAdminUsageStatus(text) {
   if (!els.adminUsageStatus) return;
   els.adminUsageStatus.textContent = text || 'No usage data loaded yet.';
+}
+
+function updateSelectedDomainIndicator() {
+  if (!els.adminUsageDomainIndicator) return;
+
+  const hasSelectedDomain = Boolean(state.selectedDomain && state.selectedDomain.name);
+  const domainLabel = hasSelectedDomain ? state.selectedDomain.name : 'none';
+  els.adminUsageDomainIndicator.textContent = `Selected domain: ${domainLabel}`;
+  els.adminUsageDomainIndicator.classList.toggle('active', hasSelectedDomain);
+
+  if (els.adminUsageScanDomainBtn) {
+    els.adminUsageScanDomainBtn.title = hasSelectedDomain
+      ? `Queue an asynchronous read-only usage scan for ${state.selectedDomain.name}.`
+      : 'Select a domain first, then run Scan Selected Domain.';
+  }
 }
 
 function setUsageButtonBusy(buttonEl, busy, busyText) {
@@ -369,6 +385,7 @@ function renderAuthState() {
   } else {
     els.currentUser.textContent = '';
   }
+  updateSelectedDomainIndicator();
 }
 
 function renderAdminMembers() {
@@ -1029,6 +1046,7 @@ function populateAdminControls(domain) {
 async function loadAdminDomain(domainId) {
   const data = await api(`/domains/${domainId}`);
   state.selectedDomain = data.domain;
+  updateSelectedDomainIndicator();
   state.selectedMembers = data.members || [];
   populateAdminControls(data.domain);
   renderAdminMembers();
@@ -2157,6 +2175,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.usageRowRefreshInFlight = new Set();
   state.activeTab = 'viewer';
   state.viewMode = 'plain';
+  updateSelectedDomainIndicator();
   stopAccountRefreshPolling();
   stopUsageRefreshPolling();
   syncingAccounts.clear();
@@ -2203,6 +2222,7 @@ if (els.adminUsageBeforeDate) {
 
 updateUsageBusyUi();
 setupEnhancedDatePickers();
+updateSelectedDomainIndicator();
 
 if (els.adminUsageRefreshBtn) {
   els.adminUsageRefreshBtn.addEventListener('click', async () => {
