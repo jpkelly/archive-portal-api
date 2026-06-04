@@ -1,7 +1,48 @@
+const UI_PREF_KEYS = {
+  selectedDomainId: 'archivePortalSelectedDomainId',
+  usageBeforeDate: 'archivePortalUsageBeforeDate',
+  archiveBeforeDate: 'archivePortalArchiveBeforeDate',
+  archiveFromDate: 'archivePortalArchiveFromDate',
+  archiveToDate: 'archivePortalArchiveToDate',
+  messageDateFrom: 'archivePortalMessageDateFrom',
+  messageDateTo: 'archivePortalMessageDateTo',
+};
+
+function isIsoDateOnly(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
+function getStoredDate(key) {
+  const v = localStorage.getItem(key) || '';
+  return isIsoDateOnly(v) ? v : '';
+}
+
+function setStoredDate(key, value) {
+  const normalized = String(value || '').slice(0, 10);
+  if (isIsoDateOnly(normalized)) {
+    localStorage.setItem(key, normalized);
+  } else {
+    localStorage.removeItem(key);
+  }
+}
+
+function getStoredDomainId() {
+  return localStorage.getItem(UI_PREF_KEYS.selectedDomainId) || '';
+}
+
+function setStoredDomainId(domainId) {
+  const id = String(domainId || '').trim();
+  if (id) {
+    localStorage.setItem(UI_PREF_KEYS.selectedDomainId, id);
+  } else {
+    localStorage.removeItem(UI_PREF_KEYS.selectedDomainId);
+  }
+}
+
 const state = {
   token: localStorage.getItem('archivePortalToken') || '',
   user: null,
-  domainId: null,
+  domainId: getStoredDomainId() || null,
   accountId: null,
   folderId: null,
   currentMessage: null,
@@ -10,8 +51,8 @@ const state = {
   messageOffset: 0,
   messageTotal: 0,
   messageQuery: '',
-  messageDateFrom: '',
-  messageDateTo: '',
+  messageDateFrom: getStoredDate(UI_PREF_KEYS.messageDateFrom),
+  messageDateTo: getStoredDate(UI_PREF_KEYS.messageDateTo),
   domains: [],
   selectedDomain: null,
   selectedMembers: [],
@@ -34,6 +75,8 @@ const state = {
 };
 
 function defaultUsageBeforeDate() {
+  const stored = getStoredDate(UI_PREF_KEYS.usageBeforeDate);
+  if (stored) return stored;
   const d = new Date();
   d.setUTCFullYear(d.getUTCFullYear() - 1);
   return d.toISOString().slice(0, 10);
@@ -197,6 +240,27 @@ function setupEnhancedDatePickers() {
       defaultDate: input.value || null,
     });
   });
+}
+
+function hydrateDateInputsFromPreferences() {
+  if (els.messageDateFrom) {
+    els.messageDateFrom.value = state.messageDateFrom || '';
+  }
+  if (els.messageDateTo) {
+    els.messageDateTo.value = state.messageDateTo || '';
+  }
+  if (els.adminUsageBeforeDate) {
+    els.adminUsageBeforeDate.value = state.usageBeforeDate || defaultUsageBeforeDate();
+  }
+  if (els.adminArchiveBeforeDate) {
+    els.adminArchiveBeforeDate.value = getStoredDate(UI_PREF_KEYS.archiveBeforeDate) || state.usageBeforeDate;
+  }
+  if (els.adminArchiveFromDate) {
+    els.adminArchiveFromDate.value = getStoredDate(UI_PREF_KEYS.archiveFromDate);
+  }
+  if (els.adminArchiveToDate) {
+    els.adminArchiveToDate.value = getStoredDate(UI_PREF_KEYS.archiveToDate);
+  }
 }
 
 function setAdminUsageStatus(text) {
@@ -648,6 +712,7 @@ async function applyUsageSuggestion(row) {
   state.adminArchiveSelectedIds = new Set([String(row.account_id)]);
   els.adminArchiveMode.value = 'before';
   els.adminArchiveBeforeDate.value = state.usageBeforeDate;
+  setStoredDate(UI_PREF_KEYS.archiveBeforeDate, state.usageBeforeDate);
   applyArchiveModeVisibility();
 
   const openTarget = domain || state.selectedDomain;
@@ -925,6 +990,7 @@ async function loadGlobalUsage(scan = false, options = {}) {
   try {
     const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
     state.usageBeforeDate = beforeDate;
+    setStoredDate(UI_PREF_KEYS.usageBeforeDate, beforeDate);
 
     const params = new URLSearchParams({ beforeDate });
     if (scan) params.set('scan', 'true');
@@ -983,6 +1049,7 @@ async function loadDomainUsage(scan = false) {
   try {
     const beforeDate = els.adminUsageBeforeDate.value || state.usageBeforeDate;
     state.usageBeforeDate = beforeDate;
+    setStoredDate(UI_PREF_KEYS.usageBeforeDate, beforeDate);
 
     const params = new URLSearchParams({ beforeDate });
     if (scan) params.set('scan', 'true');
@@ -1046,6 +1113,8 @@ function populateAdminControls(domain) {
 async function loadAdminDomain(domainId) {
   const data = await api(`/domains/${domainId}`);
   state.selectedDomain = data.domain;
+  state.domainId = data.domain ? data.domain.id : state.domainId;
+  setStoredDomainId(state.domainId);
   updateSelectedDomainIndicator();
   state.selectedMembers = data.members || [];
   populateAdminControls(data.domain);
@@ -1067,6 +1136,7 @@ async function loadAdminDomain(domainId) {
 async function openDomain(domain) {
   if (!domain) return;
   state.domainId = domain.id;
+  setStoredDomainId(domain.id);
   state.accountId = null;
   state.folderId = null;
   clearList(els.folderList, 'Select an account first.');
@@ -1570,8 +1640,10 @@ async function bootstrapFromToken() {
     renderAuthState();
     await loadDomains();
     if (state.domains.length) {
+      const preferredDomainId = getStoredDomainId();
+      const preferredDomain = state.domains.find((d) => d.id === preferredDomainId) || state.domains[0];
       setTimeout(() => {
-        openDomain(state.domains[0]).catch(() => {});
+        openDomain(preferredDomain).catch(() => {});
       }, 0);
     } else if (!state.domainId) {
       clearList(els.accountList, 'Select a domain first.');
@@ -1609,8 +1681,10 @@ els.loginForm.addEventListener('submit', async (event) => {
     renderAuthState();
     await loadDomains();
     if (state.domains.length) {
+      const preferredDomainId = getStoredDomainId();
+      const preferredDomain = state.domains.find((d) => d.id === preferredDomainId) || state.domains[0];
       setTimeout(() => {
-        openDomain(state.domains[0]).catch(() => {});
+        openDomain(preferredDomain).catch(() => {});
       }, 0);
     } else if (!state.domainId) {
       clearList(els.accountList, 'Select a domain first.');
@@ -2098,6 +2172,8 @@ els.messageSearchBtn.addEventListener('click', async () => {
   state.messageQuery = els.messageSearch.value.trim();
   state.messageDateFrom = els.messageDateFrom.value;
   state.messageDateTo = els.messageDateTo.value;
+  setStoredDate(UI_PREF_KEYS.messageDateFrom, state.messageDateFrom);
+  setStoredDate(UI_PREF_KEYS.messageDateTo, state.messageDateTo);
   state.messageOffset = 0;
   await loadMessages(state.folderId);
 });
@@ -2109,6 +2185,8 @@ els.messageSearch.addEventListener('keydown', async (event) => {
   state.messageQuery = els.messageSearch.value.trim();
   state.messageDateFrom = els.messageDateFrom.value;
   state.messageDateTo = els.messageDateTo.value;
+  setStoredDate(UI_PREF_KEYS.messageDateFrom, state.messageDateFrom);
+  setStoredDate(UI_PREF_KEYS.messageDateTo, state.messageDateTo);
   state.messageOffset = 0;
   await loadMessages(state.folderId);
 });
@@ -2122,6 +2200,8 @@ els.messageResetBtn.addEventListener('click', async () => {
   els.messageSearch.value = '';
   els.messageDateFrom.value = '';
   els.messageDateTo.value = '';
+  setStoredDate(UI_PREF_KEYS.messageDateFrom, '');
+  setStoredDate(UI_PREF_KEYS.messageDateTo, '');
   await loadMessages(state.folderId);
 });
 
@@ -2220,6 +2300,7 @@ if (els.adminUsageBeforeDate) {
   els.adminUsageBeforeDate.value = state.usageBeforeDate;
 }
 
+hydrateDateInputsFromPreferences();
 updateUsageBusyUi();
 setupEnhancedDatePickers();
 updateSelectedDomainIndicator();
@@ -2264,9 +2345,42 @@ if (els.adminUsageBeforeDate) {
     const v = els.adminUsageBeforeDate.value;
     if (v) {
       state.usageBeforeDate = v;
+      setStoredDate(UI_PREF_KEYS.usageBeforeDate, v);
       setAdminUsageStatus(`Cutoff changed to ${v}. Run Scan Selected Domain or Scan All Domains to recalculate reclaim values.`);
       renderUsageTable(state.usageRows);
     }
+  });
+}
+
+if (els.adminArchiveBeforeDate) {
+  els.adminArchiveBeforeDate.addEventListener('change', () => {
+    setStoredDate(UI_PREF_KEYS.archiveBeforeDate, els.adminArchiveBeforeDate.value);
+  });
+}
+
+if (els.adminArchiveFromDate) {
+  els.adminArchiveFromDate.addEventListener('change', () => {
+    setStoredDate(UI_PREF_KEYS.archiveFromDate, els.adminArchiveFromDate.value);
+  });
+}
+
+if (els.adminArchiveToDate) {
+  els.adminArchiveToDate.addEventListener('change', () => {
+    setStoredDate(UI_PREF_KEYS.archiveToDate, els.adminArchiveToDate.value);
+  });
+}
+
+if (els.messageDateFrom) {
+  els.messageDateFrom.addEventListener('change', () => {
+    state.messageDateFrom = els.messageDateFrom.value;
+    setStoredDate(UI_PREF_KEYS.messageDateFrom, state.messageDateFrom);
+  });
+}
+
+if (els.messageDateTo) {
+  els.messageDateTo.addEventListener('change', () => {
+    state.messageDateTo = els.messageDateTo.value;
+    setStoredDate(UI_PREF_KEYS.messageDateTo, state.messageDateTo);
   });
 }
 
