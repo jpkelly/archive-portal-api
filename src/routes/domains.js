@@ -476,8 +476,9 @@ async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
   const range = buildBeforeRange(beforeDate);
   const usernameLocal = String(account.username || '').split('@')[0];
   const { stdout } = await execFileAsync(
-    'bash',
+    'sudo',
     [
+      'bash',
       '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
       'report',
       domain.name,
