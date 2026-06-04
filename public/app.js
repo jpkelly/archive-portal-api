@@ -855,14 +855,14 @@ async function refreshUsageRow(row) {
         });
         setAdminUsageStatus(`Refresh failed for ${row.username}: ${outcome.message || 'unknown error'}`);
       } else {
-        state.usageRowRefreshErrors.set(String(row.account_id), 'Refresh timed out — try again in a moment.');
-        state.usageRowRefreshOutcome.set(String(row.account_id), {
-          state: 'failed',
-          at: Date.now(),
-          cutoff: normalizeDateOnlyText(beforeDate),
-          message: 'Refresh timed out — try again in a moment.',
-        });
-        setAdminUsageStatus(`Refresh still running for ${row.username}. Try Refresh Row again in a moment.`);
+        // The inline wait window elapsed but the backend scan is still running
+        // (large mailboxes can take several minutes). Don't paint a red error —
+        // hand the row off to the background poller, which will flip it to the
+        // green completed badge once scanned_at advances for this cutoff.
+        beginBulkScanTracking([row.account_id], beforeDate);
+        startUsageRefreshPolling();
+        renderUsageTable(state.usageRows);
+        setAdminUsageStatus(`Still scanning ${row.username} in background. The completed badge will appear when it finishes.`);
       }
     } else {
       await loadGlobalUsage(false, { background: true });
@@ -895,7 +895,7 @@ async function waitForUsageRowRefresh(row, beforeDate) {
   const targetCutoff = normalizeDateOnlyText(beforeDate);
   const originalScannedMs = row && row.scanned_at ? (Date.parse(row.scanned_at) || 0) : 0;
   const start = Date.now();
-  const timeoutMs = 120000;
+  const timeoutMs = 240000;
 
   while (Date.now() - start < timeoutMs) {
     const params = new URLSearchParams({ beforeDate: targetCutoff, _ts: String(Date.now()) });
