@@ -270,6 +270,10 @@ async function canAccessDomain(userId, domainId, role) {
 // thrash disk I/O, causing transient scan failures. This semaphore caps the
 // TOTAL number of concurrent mailbox scans across all domains.
 const USAGE_SCAN_GLOBAL_CONCURRENCY = 4;
+// Per-mailbox report timeout. The report script does a single inode pass, so
+// this is a generous safety ceiling rather than an expected duration — even a
+// cold-cache scan of a 100k+ file mailbox should finish well within it.
+const USAGE_SCAN_TIMEOUT_MS = 20 * 60 * 1000;
 function createSemaphore(max) {
   let active = 0;
   const waiters = [];
@@ -550,20 +554,34 @@ async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
   // domain so the report script can locate the Maildir.
   const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
   const domainName = String(domain.name || '').toLowerCase();
-  const { stdout } = await execFileAsync(
-    'sudo',
-    [
-      'bash',
-      '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
-      'report',
-      domainName,
-      usernameLocal,
-      range.fromDate,
-      range.toDate,
-      range.mode,
-    ],
-    { env: awsEnv, maxBuffer: 1024 * 1024, timeout: 8 * 60 * 1000, killSignal: 'SIGKILL' }
-  );
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync(
+      'sudo',
+      [
+        'bash',
+        '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
+        'report',
+        domainName,
+        usernameLocal,
+        range.fromDate,
+        range.toDate,
+        range.mode,
+      ],
+      // Large-mailbox tolerance: the report script now does a single inode pass,
+      // so it finishes in seconds for most mailboxes, but give a generous ceiling
+      // so a cold-cache scan of a very large mailbox (100k+ files) is never killed
+      // mid-flight. A killed scan would mark the row errored and trigger an endless
+      // re-scan loop. maxBuffer is small because the script emits only ~12 lines.
+      { env: awsEnv, maxBuffer: 1024 * 1024, timeout: USAGE_SCAN_TIMEOUT_MS, killSignal: 'SIGKILL' }
+    ));
+  } catch (err) {
+    if (err && (err.killed || err.signal === 'SIGKILL' || err.code === 'ETIMEDOUT')) {
+      const minutes = Math.round(USAGE_SCAN_TIMEOUT_MS / 60000);
+      throw new Error(`Report scan timed out after ${minutes} min for ${domainName}/${usernameLocal} (mailbox may be very large)`);
+    }
+    throw err;
+  }
   const parsed = parseKeyValueStdout(stdout);
   if (String(parsed.STATUS || '').toLowerCase() !== 'ok') {
     throw new Error(parsed.ERROR || 'Report script failed');

@@ -154,43 +154,48 @@ if [[ "$cmd" == "archive" ]]; then
 fi
 
 if [[ "$cmd" == "report" ]]; then
-  all_sized="$work/all-files.tsv"
-  reclaim_sized="$work/reclaim-files.tsv"
-
-  sudo find "$maildir" -type f \
-    ! -path '*/tmp/*' \
-    -printf '%s\t%p\n' > "$all_sized"
-
-  sudo find "$maildir" -type f \
-    ! -path '*/tmp/*' \
-    -newermt "$from_date" \
-    ! -newermt "$next_day" \
-    -printf '%s\t%p\n' > "$reclaim_sized"
-
-  total_files="$(awk -F'\t' 'END{print NR+0}' "$all_sized")"
-  total_bytes="$(awk -F'\t' '{s+=$1} END{printf "%.0f", s+0}' "$all_sized")"
-  reclaimable_bytes="$(awk -F'\t' '{s+=$1} END{printf "%.0f", s+0}' "$reclaim_sized")"
-
+  # Large-mailbox tolerance: do a SINGLE find pass that emits each file's size
+  # and modification time (epoch seconds) and compute every aggregate in one awk
+  # pass. The previous implementation ran two full find passes and then forked a
+  # `stat` process per file in a bash loop, which for mailboxes with 100k+ files
+  # meant 100k+ subprocess forks and routinely exceeded the report timeout —
+  # leaving rows perpetually errored and "stale". This version touches each inode
+  # once and uses no per-file subprocesses, so even very large mailboxes finish
+  # quickly and never time out.
   now_epoch="$(date +%s)"
-  gt3y="0"
-  y1to3="0"
-  lt1y="0"
+  from_epoch="$(date -u -d "$from_date" +%s 2>/dev/null || echo 0)"
+  next_day_epoch="$(date -u -d "$next_day" +%s 2>/dev/null || echo 0)"
 
-  while IFS=$'\t' read -r size fpath; do
-    [[ -z "$fpath" ]] && continue
-    mtime="$(stat -c '%Y' "$fpath" 2>/dev/null || true)"
-    if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
-      continue
-    fi
-    age_days="$(( (now_epoch - mtime) / 86400 ))"
-    if (( age_days > 1095 )); then
-      gt3y=$((gt3y + size))
-    elif (( age_days >= 365 )); then
-      y1to3=$((y1to3 + size))
-    else
-      lt1y=$((lt1y + size))
-    fi
-  done < "$all_sized"
+  report="$(sudo find "$maildir" -type f \
+    ! -path '*/tmp/*' \
+    -printf '%s\t%T@\n' \
+    | awk -F'\t' \
+        -v now="$now_epoch" -v lo="$from_epoch" -v hi="$next_day_epoch" '
+      {
+        size = $1 + 0;
+        mt = int($2);
+        files += 1;
+        total += size;
+        age_days = (now - mt) / 86400;
+        if (age_days > 1095)      gt3y  += size;
+        else if (age_days >= 365) y1to3 += size;
+        else                      lt1y  += size;
+        if (mt >= lo && mt < hi)  reclaim += size;
+      }
+      END {
+        printf "%d\t%.0f\t%.0f\t%.0f\t%.0f\t%.0f\n",
+          files + 0, total + 0, gt3y + 0, y1to3 + 0, lt1y + 0, reclaim + 0;
+      }')"
+
+  # If the find|awk pipeline produced nothing (e.g. permission failure), report a
+  # clear error instead of silently emitting zeros.
+  if [[ -z "$report" ]]; then
+    echo "ERROR=Report scan produced no output for $maildir"
+    rm -rf "$work"
+    exit 4
+  fi
+
+  IFS=$'\t' read -r total_files total_bytes gt3y y1to3 lt1y reclaimable_bytes <<< "$report"
 
   reclaim_key_date="${to_date//-/}"
   echo "STATUS=ok"
