@@ -16,6 +16,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "flatpickr": "^4.6.13",
     "helmet": "^6.2.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^2.3.3"
