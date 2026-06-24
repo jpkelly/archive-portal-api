@@ -15,9 +15,11 @@ function tempArchiveRootDir() {
 }
 
 async function resetUsageStatsForUser(userId, role) {
+  // Admins see all domains — resetting global counts would destroy indexed
+  // message counts that took hours to ingest.  Only reset usage snapshots
+  // (transient disk-usage reports), never the canonical mail_accounts counts.
   if (role === 'admin') {
-    await query('UPDATE folders SET message_count = 0, updated_at = NOW()');
-    await query('UPDATE mail_accounts SET message_count = 0, folder_count = 0, last_indexed_at = NULL, updated_at = NOW()');
+    await query('DELETE FROM mail_usage WHERE 1=1');
     return;
   }
 
