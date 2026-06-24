@@ -674,12 +674,16 @@ async function findAccountArchivePath(domain, username) {
     return null;
   }
 
+  // S3 paths are always lowercase; database usernames may have mixed case.
+  const domainLower = domain.toLowerCase();
+  const usernameLower = username.toLowerCase();
+
   // Check at most the 20 newest archive runs to bound S3 API calls.
   var checkTimestamps = timestamps.slice(0, 20);
 
   for (var i = 0; i < checkTimestamps.length; i++) {
     var ts = checkTimestamps[i];
-    var prefix = 's3://smallgod-mail-archive/archive/' + ts + '/' + domain + '/' + username + '/';
+    var prefix = 's3://smallgod-mail-archive/archive/' + ts + '/' + domainLower + '/' + usernameLower + '/';
     var stdout = '';
     try {
       var result = await execFileAsync(
