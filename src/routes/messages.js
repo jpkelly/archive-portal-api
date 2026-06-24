@@ -6,6 +6,15 @@ const path = require('path');
 
 const router = express.Router();
 
+// Simple UUID v4 generator — avoids adding a dependency.
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = Math.random() * 16 | 0;
+    var v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 router.use(requireAuth);
 
 router.get('/folders/:folderId/messages', async (req, res) => {
@@ -82,14 +91,17 @@ router.get('/:messageId', async (req, res) => {
   }
 });
 
-// List attachments for a specific message (metadata only — no binary content).
+// List attachments for a specific message.
+// Fast path: reads from the attachments table (populated during ingest).
+// Slow path: on-the-fly extraction from the S3 tarball via list_attachments.py.
 router.get('/:messageId/attachments', async (req, res) => {
-  const { messageId } = req.params;
+  var messageId = req.params.messageId;
 
   try {
     // Verify the user can access this message's domain.
-    const accessRows = await query(
-      `SELECT 1 FROM messages m
+    var accessRows = await query(
+      `SELECT m.id, m.has_attachments, m.raw_location
+       FROM messages m
        JOIN folders f ON f.id = m.folder_id
        JOIN mail_accounts a ON a.id = f.account_id
        LEFT JOIN domain_members dm ON dm.domain_id = a.domain_id AND dm.user_id = ?
@@ -101,15 +113,92 @@ router.get('/:messageId/attachments', async (req, res) => {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    const rows = await query(
-      `SELECT id, filename, mime_type, size_bytes, created_at
-       FROM attachments
-       WHERE message_id = ?
-       ORDER BY filename ASC`,
+    var msg = accessRows[0];
+
+    // Fast path: attachments already stored in the database.
+    var rows = await query(
+      'SELECT id, filename, mime_type, size_bytes, created_at FROM attachments WHERE message_id = ? ORDER BY filename ASC',
       [messageId]
     );
+    if (rows.length > 0) {
+      return res.json({ attachments: rows, source: 'db' });
+    }
 
-    return res.json({ attachments: rows });
+    // Slow path: no stored attachments but the message has them —
+    // extract metadata on-the-fly from the S3 tarball.
+    if (!msg.has_attachments) {
+      return res.json({ attachments: [], source: 'none' });
+    }
+
+    var rawLocation = msg.raw_location;
+    if (!rawLocation || rawLocation.indexOf('#') === -1) {
+      return res.json({ attachments: [], source: 'unavailable' });
+    }
+
+    var hashIdx = rawLocation.indexOf('#');
+    var s3Uri = rawLocation.slice(0, hashIdx);
+    var memberPath = rawLocation.slice(hashIdx + 1);
+
+    var extractorScript = path.join(__dirname, '..', '..', 'scripts', 'list_attachments.py');
+    var child = spawn('python3', [extractorScript, s3Uri, memberPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    var stdout = '';
+    var stderr = '';
+    child.stdout.on('data', function (chunk) { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', function (chunk) { stderr += chunk.toString('utf8'); });
+
+    child.on('close', async function (code) {
+      if (code !== 0) {
+        return res.status(500).json({ error: 'Attachment extraction failed: ' + (stderr.trim() || 'exit ' + code) });
+      }
+
+      var discovered = [];
+      var lines = stdout.trim().split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (!line) continue;
+        try {
+          var obj = JSON.parse(line);
+          if (obj.filename) {
+            discovered.push(obj);
+          }
+        } catch (e) {
+          // Skip malformed JSON lines.
+        }
+      }
+
+      // Store discovered metadata in the attachments table so subsequent
+      // views use the fast DB path. Content is NULL (served on-demand from S3).
+      var attachments = [];
+      for (var j = 0; j < discovered.length; j++) {
+        var d = discovered[j];
+        var attId = generateUUID();
+        try {
+          await query(
+            'INSERT INTO attachments (id, message_id, filename, mime_type, size_bytes, content, storage_location, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, NOW()) ON DUPLICATE KEY UPDATE filename = VALUES(filename)',
+            [attId, messageId, d.filename, d.mime_type || 'application/octet-stream', d.size_bytes || 0, 'db']
+          );
+        } catch (insertErr) {
+          // Non-critical: attachment list still works even if insert fails.
+        }
+        attachments.push({
+          id: attId,
+          filename: d.filename,
+          mime_type: d.mime_type || 'application/octet-stream',
+          size_bytes: d.size_bytes || 0,
+          created_at: null,
+        });
+      }
+
+      return res.json({ attachments: attachments, source: 's3' });
+    });
+
+    child.on('error', function (err) {
+      return res.status(500).json({ error: 'Extraction process failed: ' + err.message });
+    });
+
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch attachments', detail: err.message });
   }
