@@ -345,6 +345,17 @@ def build_sql(domain, username, s3_obj, records):
         "a.last_indexed_at=NOW(), a.updated_at=NOW() WHERE a.id=@account_id;"
     )
     lines.append("COMMIT;")
+
+    # Verification: check that the UPDATE actually set counts.  If @account_id
+    # resolved to NULL (e.g. domain lookup failed silently), the UPDATE affects
+    # zero rows and counts stay at 0.  Run a diagnostic SELECT so the caller can
+    # detect a silent failure.
+    lines.append(
+        "SELECT a.message_count AS acct_msg_count, a.folder_count AS acct_folder_count,"
+        " (SELECT COUNT(*) FROM folders WHERE account_id=a.id) AS actual_folder_count"
+        " FROM mail_accounts a"
+        " WHERE a.id=@account_id;"
+    )
     lines.append(
         "SELECT COUNT(*) AS messages_in_db FROM messages m "
         "JOIN folders f ON f.id=m.folder_id "
@@ -353,6 +364,45 @@ def build_sql(domain, username, s3_obj, records):
         "WHERE d.name=%s AND a.username=%s;" % (q(domain), q(username))
     )
     return '\n'.join(lines) + '\n'
+
+
+def build_repair_sql(domain, username):
+    """Return SQL that repairs message/folder counts for an existing account.
+
+    This runs standalone (no transaction) and can be used as a post-ingest
+    safety net or via --fix-counts.
+    """
+    lines = [
+        "SET @domain_id = (SELECT id FROM domains WHERE name = %s LIMIT 1);" % q(domain),
+        "SET @account_id = (SELECT id FROM mail_accounts WHERE domain_id=@domain_id AND username=%s LIMIT 1);" % q(username),
+        "UPDATE folders f SET f.message_count=(SELECT COUNT(*) FROM messages m WHERE m.folder_id=f.id) WHERE f.account_id=@account_id;",
+        "UPDATE mail_accounts a SET "
+        "a.message_count=(SELECT COUNT(*) FROM messages m JOIN folders f ON f.id=m.folder_id WHERE f.account_id=a.id), "
+        "a.folder_count=(SELECT COUNT(*) FROM folders f WHERE f.account_id=a.id), "
+        "a.last_indexed_at=IFNULL(a.last_indexed_at, NOW()), a.updated_at=NOW() WHERE a.id=@account_id;",
+        "SELECT a.username, a.message_count, a.folder_count, a.last_indexed_at FROM mail_accounts a WHERE a.id=@account_id;",
+    ]
+    return '\n'.join(lines) + '\n'
+
+
+def run_repair_counts(domain, username):
+    """Repair counts for an account directly via plesk db.
+
+    Returns (success_bool, message).
+    """
+    sql = build_repair_sql(domain, username)
+    proc = subprocess.Popen(
+        ['sudo', 'plesk', 'db'],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    out, err = proc.communicate(sql.encode('utf-8'))
+    out = out.decode(errors='ignore')
+    err = err.decode(errors='ignore')
+    if proc.returncode != 0:
+        return False, 'repair SQL failed: ' + (err.strip() or 'exit %d' % proc.returncode)
+    # Parse the final SELECT to confirm counts > 0
+    lines_out = [l.strip() for l in out.strip().split('\n') if l.strip()]
+    return True, '\n'.join(lines_out)
 
 
 def ingest_from_s3(s3_path, domain, username):
@@ -436,6 +486,32 @@ def ingest_from_s3(s3_path, domain, username):
             sys.exit(1)
         for line in out.strip().split('\n'):
             print(line)
+        
+        # Post-commit verification: if the final UPDATE didn't take effect
+        # (message_count still 0 despite messages existing), run a repair.
+        out_lines = [l.strip() for l in out.strip().split('\n') if l.strip()]
+        verify = {}
+        for line in out_lines:
+            if '\t' in line:
+                parts = line.split('\t')
+            else:
+                parts = line.split()
+            if len(parts) >= 2 and parts[0].isdigit():
+                if 'messages_in_db' not in verify:
+                    verify['messages_in_db'] = int(parts[0])
+            if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+                verify['acct_msg_count'] = int(parts[0])
+                verify['acct_folder_count'] = int(parts[1])
+        msgs_in_db = verify.get('messages_in_db', 0)
+        acct_count = verify.get('acct_msg_count', -1)
+        if msgs_in_db > 0 and acct_count == 0:
+            print('WARNING: messages inserted (%d) but account count is 0 — running repair' % msgs_in_db)
+            ok, msg = run_repair_counts(domain, username)
+            if ok:
+                print('Repair result: ' + msg)
+            else:
+                print('Repair failed: ' + msg)
+
         emit_progress('5/5 complete (%d msgs, %d att, %d skipped)' % (len(records), total_attachments, skipped))
         return len(records)
     finally:
@@ -448,8 +524,24 @@ if __name__ == '__main__':
         EXTRACT_ATTACHMENTS[0] = True
     if '--metadata-only' in sys.argv:
         METADATA_ONLY[0] = True
+
+    if '--fix-counts' in sys.argv:
+        if len(args) < 2:
+            print('Usage: ingest_worker.py --fix-counts <domain> <local_username>')
+            sys.exit(1)
+        domain = args[0]
+        local_user = args[1]
+        username = local_user if '@' in local_user else ('%s@%s' % (local_user, domain))
+        ok, msg = run_repair_counts(domain, username)
+        if ok:
+            print('Counts repaired:\\n' + msg)
+            sys.exit(0)
+        else:
+            print('ERROR: ' + msg)
+            sys.exit(1)
+
     if len(args) < 3:
-        print('Usage: ingest_worker.py [--extract-attachments] <domain> <local_username> <s3_path>')
+        print('Usage: ingest_worker.py [--extract-attachments|--metadata-only|--fix-counts] <domain> <local_username> [<s3_path>]')
         sys.exit(1)
     domain = args[0]
     local_user = args[1]
