@@ -776,18 +776,24 @@ async function queueIngest(req, res) {
           lines.forEach(handleLine);
         });
 
-        child.stderr.on('data', () => {
-          // Worker stderr is logged by PM2; route progress should not depend on stderr text.
+        let stderrBuffer = '';
+        child.stderr.on('data', (chunk) => {
+          stderrBuffer += chunk.toString();
         });
 
         child.on('close', (code) => {
+          // Flush any remaining stdout before checking exit status.
+          if (stdoutBuffer.trim()) {
+            handleLine(stdoutBuffer);
+          }
           if (code === 0) {
             clearIngestProgressLater(accountId, 10000);
             return;
           }
-          setIngestProgress(accountId, 'failed');
+          const errMsg = stderrBuffer.trim().split('\n').slice(-3).join(' | ') || `exit code ${code}`;
+          setIngestProgress(accountId, 'failed: ' + errMsg.slice(0, 120));
           clearIngestProgressLater(accountId, 30000);
-          console.error(`[ingest job ${jobId}] failed with exit code`, code);
+          console.error(`[ingest job ${jobId}] failed:`, errMsg);
         });
       } catch (err) {
         setIngestProgress(accountId, 'failed');
