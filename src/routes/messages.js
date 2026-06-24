@@ -80,4 +80,77 @@ router.get('/:messageId', async (req, res) => {
   }
 });
 
+// List attachments for a specific message (metadata only — no binary content).
+router.get('/:messageId/attachments', async (req, res) => {
+  const { messageId } = req.params;
+
+  try {
+    // Verify the user can access this message's domain.
+    const accessRows = await query(
+      `SELECT 1 FROM messages m
+       JOIN folders f ON f.id = m.folder_id
+       JOIN mail_accounts a ON a.id = f.account_id
+       LEFT JOIN domain_members dm ON dm.domain_id = a.domain_id AND dm.user_id = ?
+       WHERE m.id = ? AND (dm.user_id IS NOT NULL OR ? = 'admin')
+       LIMIT 1`,
+      [req.auth.sub, messageId, req.auth.role]
+    );
+    if (!accessRows.length) {
+      return res.status(404).json({ error: 'Message not found' });
+    }
+
+    const rows = await query(
+      `SELECT id, filename, content_type, size_bytes, created_at
+       FROM attachments
+       WHERE message_id = ?
+       ORDER BY filename ASC`,
+      [messageId]
+    );
+
+    return res.json({ attachments: rows });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch attachments', detail: err.message });
+  }
+});
+
+// Download a single attachment's binary content.
+// Must be defined before /:messageId to avoid route collision.
+router.get('/attachments/:attachmentId/download', async (req, res) => {
+  const { attachmentId } = req.params;
+
+  try {
+    const rows = await query(
+      `SELECT a.id, a.filename, a.content_type, a.size_bytes, a.content,
+              m.id AS message_id
+       FROM attachments a
+       JOIN messages m ON m.id = a.message_id
+       JOIN folders f ON f.id = m.folder_id
+       JOIN mail_accounts ma ON ma.id = f.account_id
+       LEFT JOIN domain_members dm ON dm.domain_id = ma.domain_id AND dm.user_id = ?
+       WHERE a.id = ? AND (dm.user_id IS NOT NULL OR ? = 'admin')
+       LIMIT 1`,
+      [req.auth.sub, attachmentId, req.auth.role]
+    );
+
+    var att = rows[0];
+    if (!att) {
+      return res.status(404).json({ error: 'Attachment not found' });
+    }
+
+    var filename = att.filename || 'attachment';
+    var content = att.content;
+    if (!content || !(content instanceof Buffer) || content.length === 0) {
+      return res.status(404).json({ error: 'Attachment content is empty' });
+    }
+
+    res.set('Content-Type', att.content_type || 'application/octet-stream');
+    res.set('Content-Length', String(content.length));
+    res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(filename) + '"');
+    res.set('Cache-Control', 'private, max-age=86400');
+    return res.send(content);
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not download attachment', detail: err.message });
+  }
+});
+
 module.exports = router;

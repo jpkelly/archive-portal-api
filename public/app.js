@@ -172,6 +172,7 @@ const els = {
   messagePageInfo: document.getElementById('messagePageInfo'),
   messageDetail: document.getElementById('messageDetail'),
   messageDetailEmail: document.getElementById('messageDetailEmail'),
+  attachmentList: document.getElementById('attachmentList'),
   viewToggle: document.getElementById('viewToggle'),
   togglePlain: document.getElementById('togglePlain'),
   toggleEmail: document.getElementById('toggleEmail'),
@@ -541,6 +542,10 @@ function resetMessageView(emptyText) {
   els.messagePageInfo.textContent = '';
   els.messagePrevBtn.disabled = true;
   els.messageNextBtn.disabled = true;
+  if (els.attachmentList) {
+    els.attachmentList.innerHTML = '';
+    els.attachmentList.classList.add('hidden');
+  }
 }
 
 function formatMessageDate(sentAt, receivedAt) {
@@ -1813,7 +1818,10 @@ async function loadMessages(folderId) {
   renderButtonList(
     els.messageList,
     data.messages || [],
-    (m) => `${formatMessageDate(m.sent_at, m.received_at)} | ${m.subject || '(no subject)'} - ${m.from_email || 'unknown'}`,
+    function (m) {
+      var prefix = m.has_attachments ? '\uD83D\uDCCE ' : '';
+      return prefix + formatMessageDate(m.sent_at, m.received_at) + ' | ' + (m.subject || '(no subject)') + ' - ' + (m.from_email || 'unknown');
+    },
     async (message) => {
       await loadMessage(message.id);
     }
@@ -1951,6 +1959,56 @@ async function loadMessage(messageId) {
   renderPlainView(m);
   renderEmailView(m);
   applyViewMode();
+  loadAttachments(messageId);
+}
+
+async function loadAttachments(messageId) {
+  var list = els.attachmentList;
+  if (!list) return;
+  list.innerHTML = '';
+  list.classList.add('hidden');
+
+  try {
+    var data = await api('/messages/' + messageId + '/attachments');
+    var attachments = data && data.attachments ? data.attachments : [];
+    if (!attachments.length) return;
+
+    list.classList.remove('hidden');
+
+    var heading = document.createElement('h4');
+    heading.textContent = 'Attachments (' + attachments.length + ')';
+    list.appendChild(heading);
+
+    for (var i = 0; i < attachments.length; i++) {
+      var att = attachments[i];
+      var row = document.createElement('div');
+      row.className = 'attachment-row';
+
+      var info = document.createElement('span');
+      info.className = 'attachment-info';
+      info.textContent = (att.filename || 'unnamed') + ' (' + formatBytes(att.size_bytes) + ')';
+
+      var link = document.createElement('a');
+      link.className = 'attachment-download button ghost';
+      link.textContent = 'Download';
+      link.href = '/messages/attachments/' + att.id + '/download';
+      link.setAttribute('download', att.filename || 'attachment');
+
+      row.appendChild(info);
+      row.appendChild(link);
+      list.appendChild(row);
+    }
+  } catch (err) {
+    // Silently ignore — attachments are best-effort.
+  }
+}
+
+function formatBytes(bytes) {
+  if (bytes == null) return '0 B';
+  var b = Number(bytes);
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
 }
 
 async function bootstrapFromToken() {

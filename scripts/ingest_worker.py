@@ -20,6 +20,7 @@ import tarfile
 import tempfile
 import shutil
 import re
+import binascii
 from html import unescape
 from email import policy
 from email.parser import BytesParser
@@ -31,6 +32,10 @@ AWS_ENV.setdefault('HOME', '/home/centos')
 AWS_ENV.setdefault('AWS_CONFIG_FILE', '/home/centos/.aws/config')
 AWS_ENV.setdefault('AWS_SHARED_CREDENTIALS_FILE', '/home/centos/.aws/credentials')
 AWS_BIN = '/usr/bin/aws'
+
+# Maximum attachment size to store in the database (25 MB).
+# Larger attachments are skipped with a warning.
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 
 def emit_progress(text):
@@ -98,6 +103,37 @@ def html_to_text(html):
     return s.strip()
 
 
+def _extract_attachment(part):
+    """Extract attachment metadata and decoded binary content from a MIME part.
+    Returns a dict with id, filename, content_type, size_bytes, content_hex,
+    or None if the attachment exceeds MAX_ATTACHMENT_BYTES."""
+    filename = part.get_filename() or 'unnamed'
+    content_type = (part.get_content_type() or 'application/octet-stream')
+    try:
+        payload = part.get_payload(decode=True)
+        if payload is None:
+            return None
+    except Exception:
+        return None
+
+    size_bytes = len(payload)
+    if size_bytes > MAX_ATTACHMENT_BYTES:
+        print('WARNING: skipping attachment "%s" (%d bytes) — exceeds %d byte limit'
+              % (filename, size_bytes, MAX_ATTACHMENT_BYTES))
+        return None
+    if size_bytes == 0:
+        return None
+
+    content_hex = binascii.hexlify(payload).decode('ascii')
+    return {
+        'id': str(uuid.uuid4()),
+        'filename': filename,
+        'content_type': content_type[:255],
+        'size_bytes': size_bytes,
+        'content_hex': content_hex,
+    }
+
+
 def parse_msg(raw):
     msg = BytesParser(policy=policy.default).parsebytes(raw)
     subject = msg.get('subject')
@@ -117,6 +153,7 @@ def parse_msg(raw):
         dt = None
 
     has_attach = 0
+    attachments = []
     body = ''
     body_html = ''
     if msg.is_multipart():
@@ -124,10 +161,13 @@ def parse_msg(raw):
         html_parts = []
         for p in msg.walk():
             cdisp = (p.get_content_disposition() or '').lower()
-            if cdisp == 'attachment':
-                has_attach = 1
-                continue
             ctype = (p.get_content_type() or '').lower()
+            if cdisp == 'attachment' or (cdisp == 'inline' and p.get_filename()):
+                has_attach = 1
+                att = _extract_attachment(p)
+                if att is not None:
+                    attachments.append(att)
+                continue
             if ctype == 'text/plain':
                 try:
                     plain_parts.append(p.get_content())
@@ -188,6 +228,7 @@ def parse_msg(raw):
         'body_text': body,
         'body_html': body_html,
         'message_id': message_id,
+        'attachments': attachments,
     }
 
 
@@ -233,12 +274,13 @@ def build_sql(domain, username, s3_obj, records):
     # messages — batch in chunks to avoid huge SQL
     for r in records:
         mid = r['message_id'] if r['message_id'] is not None else ''
+        msg_uuid = str(uuid.uuid4())
         lines.append(
             "INSERT INTO messages (id,folder_id,message_id,message_id_hash,subject,from_name,from_email,to_list,cc_list,bcc_list,sent_at,received_at,has_attachments,size_bytes,preview_text,body_text,body_html,raw_location,mime_hash,created_at,updated_at) "
             "VALUES (%s,@%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%s,%s,%s,%s,%s,NOW(),NOW()) "
             "ON DUPLICATE KEY UPDATE subject=VALUES(subject), from_name=VALUES(from_name), from_email=VALUES(from_email), to_list=VALUES(to_list), cc_list=VALUES(cc_list), bcc_list=VALUES(bcc_list), sent_at=VALUES(sent_at), received_at=VALUES(received_at), has_attachments=VALUES(has_attachments), size_bytes=VALUES(size_bytes), preview_text=VALUES(preview_text), body_text=VALUES(body_text), body_html=VALUES(body_html), raw_location=VALUES(raw_location), updated_at=NOW();"
             % (
-                q(str(uuid.uuid4())), folder_var[r['folder']],
+                q(msg_uuid), folder_var[r['folder']],
                 q(mid), q(r['message_id_hash']),
                 q(r['subject']), q(r['from_name']), q(r['from_email']),
                 q(r['to_list']), q(r['cc_list']), q(r['bcc_list']),
@@ -248,6 +290,19 @@ def build_sql(domain, username, s3_obj, records):
                 q(r['raw_location']), q(r['mime_hash'])
             )
         )
+
+        # Insert attachment metadata + binary content for each extracted attachment.
+        for att in r.get('attachments', []):
+            lines.append(
+                "INSERT INTO attachments (id,message_id,filename,content_type,size_bytes,content,created_at) "
+                "VALUES (%s,%s,%s,%s,%d,0x%s,NOW()) "
+                "ON DUPLICATE KEY UPDATE filename=VALUES(filename), content_type=VALUES(content_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
+                % (
+                    q(att['id']), q(msg_uuid),
+                    q(att['filename']), q(att['content_type']),
+                    att['size_bytes'], att['content_hex']
+                )
+            )
 
     lines.append("UPDATE folders f SET f.message_count=(SELECT COUNT(*) FROM messages m WHERE m.folder_id=f.id) WHERE f.account_id=@account_id;")
     lines.append(
