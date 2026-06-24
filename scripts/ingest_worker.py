@@ -344,6 +344,7 @@ def ingest_from_s3(s3_path, domain, username):
         print('Parsing messages ...')
         records = []
         total_attachments = 0
+        skipped = 0
         with tarfile.open(tar_local, 'r:gz') as tf:
             members = [m for m in tf.getmembers() if m.isfile()
                        and is_message_member(m.name)
@@ -352,13 +353,20 @@ def ingest_from_s3(s3_path, domain, username):
             for idx, m in enumerate(members):
                 # Emit a progress update every 500 messages so the UI doesn't look hung.
                 if idx > 0 and idx % 500 == 0:
-                    emit_progress('3/5 parsing (%d/%d messages, %d attachments)'
-                                  % (idx, total_members, total_attachments))
+                    emit_progress('3/5 parsing (%d/%d msgs, %d att, %d skipped)'
+                                  % (idx, total_members, total_attachments, skipped))
 
                 name = m.name
                 folder = folder_from_member(name)
                 raw = tf.extractfile(m).read()
-                parsed = parse_msg(raw)
+                try:
+                    parsed = parse_msg(raw)
+                except Exception:
+                    # Skip individual messages that fail to parse (malformed
+                    # headers, encoding errors, etc.) instead of aborting the
+                    # entire ingest.
+                    skipped += 1
+                    continue
                 parsed['folder'] = folder
                 parsed['raw_location'] = '%s#%s' % (s3_path, name)
                 parsed['mime_hash'] = hashlib.sha256(raw).hexdigest()
@@ -368,8 +376,8 @@ def ingest_from_s3(s3_path, domain, username):
                 total_attachments += len(parsed.get('attachments', []))
                 records.append(parsed)
 
-        print('Parsed %d messages across %d folders (%d attachments)' % (
-            len(records), len(set([r['folder'] for r in records])), total_attachments))
+        print('Parsed %d messages across %d folders (%d attachments, %d skipped)' % (
+            len(records), len(set([r['folder'] for r in records])), total_attachments, skipped))
 
         sql_path = os.path.join(work, 'ingest.sql')
         with open(sql_path, 'w') as f:
@@ -384,7 +392,7 @@ def ingest_from_s3(s3_path, domain, username):
             ).decode(errors='ignore')
         for line in result.strip().split('\n'):
             print(line)
-        emit_progress('5/5 complete (%d messages, %d attachments)' % (len(records), total_attachments))
+        emit_progress('5/5 complete (%d msgs, %d att, %d skipped)' % (len(records), total_attachments, skipped))
         return len(records)
     finally:
         shutil.rmtree(work, ignore_errors=True)
