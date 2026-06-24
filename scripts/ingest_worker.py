@@ -318,26 +318,34 @@ def build_sql(domain, username, s3_obj, records):
             )
         )
 
-        # Insert attachment metadata only when NOT in metadata-only mode.
-        # In metadata-only mode, attachments are served on-demand from S3
-        # (same as message bodies), so we skip the INSERT to avoid FK
-        # violations when ON DUPLICATE KEY UPDATE fires on messages.
-        if not METADATA_ONLY[0]:
-            for att in r.get('attachments', []):
-                if att['content_hex'] is not None:
-                    content_sql = '0x' + att['content_hex']
-                else:
-                    content_sql = 'NULL'
-                lines.append(
-                    "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
-                    "VALUES (%s,%s,%s,%s,%d,%s,'db',NOW()) "
-                    "ON DUPLICATE KEY UPDATE filename=VALUES(filename), mime_type=VALUES(mime_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
-                    % (
-                        q(att['id']), q(msg_uuid),
-                        q(att['filename']), q(att['mime_type']),
-                        att['size_bytes'], content_sql
-                    )
+        # Attachment metadata: always store (even in metadata-only mode).
+        # Metadata is tiny (~200 bytes per attachment — ~3.4 MB for 17k attachments)
+        # and enables instant attachment listing without downloading the tarball.
+        # We use a subquery to resolve the real message id instead of the
+        # Python-generated UUID, because ON DUPLICATE KEY UPDATE on messages
+        # may keep the existing row id (not our generated one).
+        # In metadata-only mode: content = NULL, storage_location = 's3'
+        # In full mode: content = binary, storage_location = 'db'
+        for att in r.get('attachments', []):
+            if att['content_hex'] is not None and not METADATA_ONLY[0]:
+                content_sql = '0x' + att['content_hex']
+                storage = 'db'
+            else:
+                content_sql = 'NULL'
+                storage = 's3'
+            lines.append(
+                "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
+                "SELECT UUID(), m.id, %s, %s, %d, %s, '%s', NOW() "
+                "FROM messages m "
+                "JOIN folders f ON f.id = m.folder_id "
+                "WHERE f.account_id = @account_id AND m.message_id_hash = %s "
+                "LIMIT 1;"
+                % (
+                    q(att['filename']), q(att['mime_type']),
+                    att['size_bytes'], content_sql, storage,
+                    q(r['message_id_hash'])
                 )
+            )
 
     lines.append("UPDATE folders f SET f.message_count=(SELECT COUNT(*) FROM messages m WHERE m.folder_id=f.id) WHERE f.account_id=@account_id;")
     lines.append(
@@ -408,11 +416,26 @@ def run_repair_counts(domain, username):
 
 
 def backfill_bodies(s3_path, domain, username):
-    """Download tarball once, extract body text for every .eml, UPDATE the DB.
+    """Download tarball once, extract body text for every .eml, UPDATE the DB."""
+    return _backfill_pass(s3_path, domain, username, bodies=True, attachments=False)
 
-    For accounts ingested with --metadata-only that have empty body_text.
-    Downloads the tarball once (instead of once per message like the on-demand
-    extract_body.py path), then updates all matching messages in batches.
+
+def backfill_attachments(s3_path, domain, username):
+    """Download tarball once, extract attachment metadata for every .eml, INSERT into DB."""
+    return _backfill_pass(s3_path, domain, username, bodies=False, attachments=True)
+
+
+def backfill_all(s3_path, domain, username):
+    """Download tarball once, extract bodies + attachment metadata, update DB."""
+    return _backfill_pass(s3_path, domain, username, bodies=True, attachments=True)
+
+
+def _backfill_pass(s3_path, domain, username, bodies, attachments):
+    """Single tarball download pass that extracts bodies and/or attachment metadata.
+
+    Uses the subquery approach for attachment INSERTs (same as build_sql) so
+    the correct message_id is resolved even when ON DUPLICATE KEY UPDATE kept
+    a different row id.
     """
     work = tempfile.mkdtemp(prefix='backfill_')
     try:
@@ -424,9 +447,10 @@ def backfill_bodies(s3_path, domain, username):
             env=AWS_ENV,
         )
 
-        print('Extracting bodies ...')
-        updates = []
-        total = 0
+        body_updates = []
+        att_lines = []
+        total_bodies = 0
+        total_atts = 0
         skipped = 0
         batch_size = 500
 
@@ -436,8 +460,8 @@ def backfill_bodies(s3_path, domain, username):
                        and folder_from_member(m.name)]
             for idx, m in enumerate(members):
                 if idx > 0 and idx % 100 == 0:
-                    print('  %d/%d messages processed (%d bodies, %d skipped)' %
-                          (idx, len(members), total, skipped))
+                    print('  %d/%d messages (%d bodies, %d atts, %d skipped)' %
+                          (idx, len(members), total_bodies, total_atts, skipped))
 
                 name = m.name
                 raw = tf.extractfile(m).read()
@@ -447,25 +471,51 @@ def backfill_bodies(s3_path, domain, username):
                     skipped += 1
                     continue
 
-                body = (parsed.get('body_text') or '').strip()
-                preview = (parsed.get('preview_text') or '').strip()
-                if not body and not preview:
-                    skipped += 1
-                    continue
+                if bodies:
+                    body = (parsed.get('body_text') or '').strip()
+                    preview = (parsed.get('preview_text') or '').strip()
+                    if body or preview:
+                        raw_location = '%s#%s' % (s3_path, name)
+                        body_updates.append((body, preview, raw_location))
+                        total_bodies += 1
 
-                raw_location = '%s#%s' % (s3_path, name)
-                updates.append((body, preview, raw_location))
-                total += 1
+                    if len(body_updates) >= batch_size:
+                        _flush_body_updates(body_updates)
+                        body_updates = []
 
-                if len(updates) >= batch_size:
-                    _flush_body_updates(updates)
-                    updates = []
+                if attachments:
+                    for att in parsed.get('attachments', []):
+                        att_lines.append(
+                            "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
+                            "SELECT UUID(), m.id, %s, %s, %d, NULL, 's3', NOW() "
+                            "FROM messages m "
+                            "JOIN folders f ON f.id = m.folder_id "
+                            "WHERE f.account_id = (SELECT a2.id FROM mail_accounts a2 "
+                            "JOIN domains d2 ON d2.id = a2.domain_id "
+                            "WHERE d2.name = %s AND a2.username = %s LIMIT 1) "
+                            "AND m.message_id_hash = %s "
+                            "LIMIT 1;"
+                            % (
+                                q(att['filename']), q(att['mime_type']),
+                                att['size_bytes'],
+                                q(domain), q(username),
+                                q(parsed['message_id_hash'])
+                            )
+                        )
+                        total_atts += 1
 
-        if updates:
-            _flush_body_updates(updates)
+                    if len(att_lines) >= batch_size:
+                        _flush_attachment_inserts(att_lines)
+                        att_lines = []
 
-        print('Backfilled %d message bodies (%d skipped)' % (total, skipped))
-        return total
+        if body_updates:
+            _flush_body_updates(body_updates)
+        if att_lines:
+            _flush_attachment_inserts(att_lines)
+
+        print('Backfilled %d bodies, %d attachments (%d skipped)' %
+              (total_bodies, total_atts, skipped))
+        return (total_bodies, total_atts)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -480,15 +530,27 @@ def _flush_body_updates(updates):
             "WHERE raw_location=%s AND (body_text IS NULL OR body_text='') LIMIT 1;" %
             (q(body), q(preview), q(raw_location))
         )
-    with open(sql_path, 'w') as f:
+    _run_sql_file(sql_path, lines)
+
+
+def _flush_attachment_inserts(lines):
+    """Write a batch of attachment INSERT statements and execute."""
+    sql_path = '/tmp/backfill_attachments_batch.sql'
+    _run_sql_file(sql_path, lines)
+
+
+def _run_sql_file(path, lines):
+    """Write SQL lines to a file and execute via plesk db. Prints warnings on failure."""
+    with open(path, 'w') as f:
         f.write('\n'.join(lines) + '\n')
-    proc = subprocess.Popen(
-        ['sudo', 'plesk', 'db'],
-        stdin=open(sql_path, 'r'), stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    out, err = proc.communicate()
+    with open(path, 'r') as f:
+        proc = subprocess.Popen(
+            ['sudo', 'plesk', 'db'],
+            stdin=f, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        out, err = proc.communicate()
     if proc.returncode != 0:
-        print('WARNING: batch UPDATE failed: ' + err.decode(errors='ignore').strip()[:500])
+        print('WARNING: SQL batch failed: ' + err.decode(errors='ignore').strip()[:500])
 
 
 def ingest_from_s3(s3_path, domain, username):
@@ -626,16 +688,24 @@ if __name__ == '__main__':
             print('ERROR: ' + msg)
             sys.exit(1)
 
-    if '--backfill-bodies' in sys.argv:
+    if '--backfill-all' in sys.argv or '--backfill-bodies' in sys.argv or '--backfill-attachments' in sys.argv:
         if len(args) < 3:
-            print('Usage: ingest_worker.py --backfill-bodies <domain> <local_username> <s3_path>')
+            print('Usage: ingest_worker.py --backfill-all <domain> <local_username> <s3_path>')
             sys.exit(1)
         domain = args[0]
         local_user = args[1]
         s3_path = args[2]
         username = local_user if '@' in local_user else ('%s@%s' % (local_user, domain))
-        count = backfill_bodies(s3_path, domain, username)
-        print('Done: %d message bodies backfilled for %s' % (count, username))
+        do_bodies = '--backfill-all' in sys.argv or '--backfill-bodies' in sys.argv
+        do_atts = '--backfill-all' in sys.argv or '--backfill-attachments' in sys.argv
+        bodies_count, atts_count = _backfill_pass(s3_path, domain, username,
+                                                   bodies=do_bodies, attachments=do_atts)
+        parts = []
+        if do_bodies:
+            parts.append('%d bodies' % bodies_count)
+        if do_atts:
+            parts.append('%d attachments' % atts_count)
+        print('Done: %s backfilled for %s' % (', '.join(parts), username))
         sys.exit(0)
 
     if len(args) < 3:

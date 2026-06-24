@@ -238,7 +238,7 @@ router.get('/:messageId/attachments', async (req, res) => {
         try {
           await query(
             'INSERT INTO attachments (id, message_id, filename, mime_type, size_bytes, content, storage_location, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, NOW()) ON DUPLICATE KEY UPDATE filename = VALUES(filename)',
-            [attId, messageId, d.filename, d.mime_type || 'application/octet-stream', d.size_bytes || 0, 'db']
+            [attId, messageId, d.filename, d.mime_type || 'application/octet-stream', d.size_bytes || 0, 's3']
           );
         } catch (insertErr) {
           // Non-critical: attachment list still works even if insert fails.
