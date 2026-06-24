@@ -351,8 +351,8 @@ def ingest_from_s3(s3_path, domain, username):
                        and folder_from_member(m.name)]
             total_members = len(members)
             for idx, m in enumerate(members):
-                # Emit a progress update every 500 messages so the UI doesn't look hung.
-                if idx > 0 and idx % 500 == 0:
+                # Emit a progress update every 100 messages so the UI feels responsive.
+                if idx > 0 and idx % 100 == 0:
                     emit_progress('3/5 parsing (%d/%d msgs, %d att, %d skipped)'
                                   % (idx, total_members, total_attachments, skipped))
 
