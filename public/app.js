@@ -2664,33 +2664,29 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
 
       // Poll until the archive job finishes, updating the table so the
       // status badge reflects the real server state in real time.
+      // Keep polling even on transient nulls — the archive worker may
+      // briefly exhaust the DB connection pool while processing large
+      // mailboxes (100k+ files).  Only give up when the full poll budget
+      // (80 iterations ≈ 4 min) is exhausted.
       var pollResult = null;
-      var nullStreak = 0;
       for (var poll = 0; poll < 80; poll++) {
-        // Faster first poll (1s), then 3s intervals.
         var delay = poll === 0 ? 1000 : 3000;
         await new Promise(function (resolve) { setTimeout(resolve, delay); });
 
-        var stateResp = await api(`/domains/${domainId}/accounts/${accountId}/archive-state`);
-        pollResult = stateResp.archive;
+        try {
+          var stateResp = await api(`/domains/${domainId}/accounts/${accountId}/archive-state`);
+          pollResult = stateResp.archive;
+        } catch (_) {
+          // API call itself failed — keep polling.
+        }
 
-        // Refresh the admin table so the status badge updates live.
         await loadAdminDomain(domainId).catch(function () {});
 
         if (pollResult && pollResult.status !== 'running') break;
-
-        // Tolerate transient null responses (DB connection blip, etc.)
-        // but fail if we get 3 nulls in a row.
-        if (!pollResult) {
-          nullStreak += 1;
-          if (nullStreak >= 3) break;
-        } else {
-          nullStreak = 0;
-        }
       }
 
       if (!pollResult) {
-        throw new Error('Archive state disappeared during polling');
+        throw new Error('Archive did not complete within the polling window — check server logs');
       }
       if (pollResult.status === 'error' || pollResult.error) {
         throw new Error(pollResult.error || 'Archive job failed');
