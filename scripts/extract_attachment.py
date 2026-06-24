@@ -95,15 +95,14 @@ def main():
         for part in msg.walk():
             cdisp = (part.get_content_disposition() or '').lower()
             part_filename = part.get_filename() or ''
-            if not (cdisp == 'attachment' or (cdisp == 'inline' and part_filename)):
+            # Only real attachments — skip inline previews.
+            if cdisp != 'attachment' or not part_filename:
                 continue
 
             if part_filename != target_filename:
                 continue
 
-            # Prefer attachment-disposition parts over inline, and the
-            # largest payload among duplicates (handles inline previews).
-            is_attachment = (cdisp == 'attachment')
+            # Prefer the largest payload among duplicates.
             try:
                 payload = part.get_payload(decode=True)
                 if payload is None:
@@ -112,11 +111,7 @@ def main():
                 continue
 
             part_size = len(payload)
-            if is_attachment and part_size >= found_size:
-                found = (part, payload)
-                found_size = part_size
-            elif not is_attachment and found is None:
-                # Fall back to inline only if no attachment-disposition match exists.
+            if part_size >= found_size:
                 found = (part, payload)
                 found_size = part_size
 

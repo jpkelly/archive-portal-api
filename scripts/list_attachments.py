@@ -78,12 +78,16 @@ def main():
             die(2, 'Empty .eml file')
 
         # 3. Parse the .eml and list attachments (metadata only).
+        # Skip inline parts with filenames (often CID previews), only include
+        # actual Content-Disposition: attachment parts. Deduplicate by filename.
         msg = BytesParser(policy=policy.default).parsebytes(raw_email)
+        seen = {}
 
         for part in msg.walk():
             cdisp = (part.get_content_disposition() or '').lower()
             part_filename = part.get_filename() or ''
-            if not (cdisp == 'attachment' or (cdisp == 'inline' and part_filename)):
+            # Only real attachments — skip inline previews that happen to have filenames.
+            if cdisp != 'attachment' or not part_filename:
                 continue
 
             try:
@@ -94,15 +98,23 @@ def main():
             except Exception:
                 continue
 
-            if size_bytes == 0:
+            # Skip suspiciously small payloads (< 100 bytes) — likely parser errors
+            # or inline CID references misidentified as attachments.
+            if size_bytes < 100:
                 continue
 
             content_type = (part.get_content_type() or 'application/octet-stream')
-            sys.stdout.write(json.dumps({
-                'filename': part_filename,
-                'mime_type': content_type[:255],
-                'size_bytes': size_bytes,
-            }) + '\n')
+
+            # Deduplicate: keep the largest version of each filename.
+            if part_filename not in seen or size_bytes > seen[part_filename]['size_bytes']:
+                seen[part_filename] = {
+                    'filename': part_filename,
+                    'mime_type': content_type[:255],
+                    'size_bytes': size_bytes,
+                }
+
+        for entry in seen.values():
+            sys.stdout.write(json.dumps(entry) + '\n')
 
         sys.stdout.flush()
 
