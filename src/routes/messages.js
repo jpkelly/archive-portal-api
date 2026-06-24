@@ -269,25 +269,29 @@ router.get('/attachments/:attachmentId/download', async (req, res) => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    // Pipe raw stdout directly to the response — no header parsing needed.
-    child.stdout.pipe(res);
+    // Buffer all stdout before sending — avoids half-sent responses on error.
+    var stdoutChunks = [];
+    child.stdout.on('data', function (chunk) { stdoutChunks.push(chunk); });
 
     var stderr = '';
-    child.stderr.on('data', function (chunk) {
-      stderr += chunk.toString('utf8');
-    });
+    child.stderr.on('data', function (chunk) { stderr += chunk.toString('utf8'); });
 
     child.on('close', function (code) {
-      if (code !== 0 && !res.headersSent) {
-        var msg = stderr.trim() || ('Extraction exited with code ' + code);
-        res.status(500).json({ error: msg });
+      if (code !== 0) {
+        console.error('[attachment download] exit ' + code + ': ' + (stderr.trim() || 'no stderr'));
+        return res.status(500).json({ error: 'Attachment extraction failed: ' + (stderr.trim() || 'exit ' + code) });
       }
+      var body = Buffer.concat(stdoutChunks);
+      res.set('Content-Type', mimeType);
+      res.set('Content-Length', String(body.length));
+      res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(filename) + '"');
+      res.set('Cache-Control', 'private, max-age=3600');
+      return res.send(body);
     });
 
     child.on('error', function (err) {
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Extraction process failed: ' + err.message });
-      }
+      console.error('[attachment download] spawn error: ' + err.message);
+      return res.status(500).json({ error: 'Extraction process failed: ' + err.message });
     });
 
   } catch (err) {
