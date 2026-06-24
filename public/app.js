@@ -2630,13 +2630,22 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
   let succeeded = 0;
   let failed = 0;
 
+  // Capture domain ID before the loop — state.selectedDomain can become
+  // null if the user navigates or the tab loses context during polling.
+  var domainId = state.selectedDomain ? state.selectedDomain.id : null;
+  if (!domainId) {
+    setStatus('No domain selected.');
+    els.adminArchiveStartBtn.disabled = false;
+    return;
+  }
+
   for (const accountId of selected) {
     const account = state.adminAccounts.find((a) => String(a.id) === accountId);
     const username = account ? account.username : accountId;
     els.adminArchiveStatus.textContent = `Archiving ${username}\u2026 (${succeeded + failed + 1}/${selected.length})`;
 
     try {
-      const createResp = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/create`, {
+      const createResp = await api(`/domains/${domainId}/accounts/${accountId}/archive/create`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
@@ -2654,7 +2663,7 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
         var delay = poll === 0 ? 1000 : 3000;
         await new Promise(function (resolve) { setTimeout(resolve, delay); });
 
-        var stateResp = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`);
+        var stateResp = await api(`/domains/${domainId}/accounts/${accountId}/archive-state`);
         pollResult = stateResp.archive;
 
         // Refresh the admin table so the status badge updates live.
