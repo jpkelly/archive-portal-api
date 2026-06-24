@@ -68,7 +68,7 @@ router.get('/:messageId', async (req, res) => {
   try {
     const rows = await query(
       `SELECT m.id, m.subject, m.from_name, m.from_email, m.to_list, m.cc_list, m.bcc_list,
-              m.sent_at, m.received_at, m.preview_text, m.body_text, m.body_html, m.raw_location,
+              m.sent_at, m.received_at, m.has_attachments, m.preview_text, m.body_text, m.body_html, m.raw_location,
               a.id AS account_id, a.username, d.id AS domain_id, d.name AS domain_name
        FROM messages m
        JOIN folders f ON f.id = m.folder_id
