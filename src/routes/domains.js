@@ -1124,7 +1124,7 @@ router.post('/archive-all', async (req, res) => {
           skipped++;
           continue;
         }
-        const usernameLocal = String(account.username || '').split('@')[0];
+        const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
         const jobId = `archive_all_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         tasks.push({ accountId: account.id, domainName: domain.name, usernameLocal, jobId });
       }
@@ -1734,7 +1734,7 @@ router.post('/:domainId/accounts/:accountId/archive/create', async (req, res) =>
       return res.status(400).json({ error: normalized.error });
     }
 
-    const usernameLocal = String(account.username || '').split('@')[0];
+    const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
     const jobId = `archive_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
     await setArchiveState(accountId, {
@@ -1973,7 +1973,7 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
       { env: awsEnv, maxBuffer: 1024 * 1024 }
     );
 
-    const usernameLocal = String(account.username || '').split('@')[0];
+    const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
     let stdout;
     try {
       ({ stdout } = await execFileAsync(
