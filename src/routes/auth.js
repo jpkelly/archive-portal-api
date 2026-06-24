@@ -56,11 +56,56 @@ async function removeDirRecursive(dir) {
   }
 }
 
+// In-memory login rate limiter — hand-rolled to avoid new dependencies.
+// Window: 15 minutes, max 10 attempts per ip+email pair.
+var loginAttempts = new Map();
+var LOGIN_WINDOW_MS = 15 * 60 * 1000;
+var LOGIN_MAX_ATTEMPTS = 10;
+var LOGIN_MAP_MAX_SIZE = 1000;
+
+function checkLoginRateLimit(ip, email) {
+  var key = ip + '|' + (email || '');
+  var now = Date.now();
+  var entry = loginAttempts.get(key);
+
+  if (!entry || now - entry.windowStart > LOGIN_WINDOW_MS) {
+    loginAttempts.set(key, { count: 1, windowStart: now });
+    return false;
+  }
+
+  entry.count += 1;
+
+  // Prune expired entries when the map grows too large.
+  if (loginAttempts.size > LOGIN_MAP_MAX_SIZE) {
+    var toDelete = [];
+    loginAttempts.forEach(function (val, k) {
+      if (now - val.windowStart > LOGIN_WINDOW_MS) {
+        toDelete.push(k);
+      }
+    });
+    for (var i = 0; i < toDelete.length; i++) {
+      loginAttempts.delete(toDelete[i]);
+    }
+  }
+
+  return entry.count > LOGIN_MAX_ATTEMPTS;
+}
+
+function clearLoginRateLimit(ip, email) {
+  var key = ip + '|' + (email || '');
+  loginAttempts.delete(key);
+}
+
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body || {};
+  var email = (req.body && req.body.email) || '';
+  var password = (req.body && req.body.password) || '';
 
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
+  }
+
+  if (checkLoginRateLimit(req.ip, email)) {
+    return res.status(429).json({ error: 'Too many login attempts, try again later' });
   }
 
   try {
@@ -93,6 +138,8 @@ router.post('/login', async (req, res) => {
     );
 
     await query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id]);
+
+    clearLoginRateLimit(req.ip, email);
 
     return res.json({
       token,
