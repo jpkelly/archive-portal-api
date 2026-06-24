@@ -1728,6 +1728,11 @@ async function loadAccounts(domainId) {
     }
     
     btn.addEventListener('click', async () => {
+      // Purge cached bodies from the previous account to save MySQL space.
+      if (state.accountId && state.accountId !== account.id) {
+        api('/domains/' + state.domainId + '/accounts/' + state.accountId + '/purge-bodies', { method: 'POST' }).catch(function () {});
+      }
+
       state.accountId = account.id;
       const selectedButtons = els.accountList.querySelectorAll('.account-main-button.selected');
       selectedButtons.forEach((selectedBtn) => {

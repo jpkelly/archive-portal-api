@@ -2156,8 +2156,24 @@ router.post('/:domainId/archive/discover', async (req, res) => {
 router.get('/:domainId/accounts/:accountId/ingest', queueIngest);
 router.post('/:domainId/accounts/:accountId/ingest', queueIngest);
 
-// Purge cached message bodies to free MySQL space. Bodies are re-fetched
-// on-demand from S3 when the message is viewed again.
+// Purge cached message bodies for a single account.
+router.post('/:domainId/accounts/:accountId/purge-bodies', async (req, res) => {
+  var accountId = req.params.accountId;
+  try {
+    if (!requireAdmin(req, res)) return;
+    await query(
+      `UPDATE messages m JOIN folders f ON f.id = m.folder_id
+       SET m.body_text = NULL, m.body_html = NULL, m.preview_text = NULL
+       WHERE f.account_id = ?`,
+      [accountId]
+    );
+    return res.json({ ok: true, account_id: accountId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not purge bodies', detail: err.message });
+  }
+});
+
+// Purge cached message bodies for an entire domain (before a date).
 router.post('/:domainId/purge-bodies', async (req, res) => {
   var domainId = req.params.domainId;
   var beforeDate = String(req.body.beforeDate || '').trim();
