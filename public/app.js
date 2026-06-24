@@ -46,6 +46,23 @@ function isIsoDateOnly(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
 }
 
+// Fetch and display the deployed app version from the /health endpoint.
+function loadAppVersion() {
+  var el = document.getElementById('appVersion');
+  if (!el) return;
+  fetch('/health')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (data && data.version) {
+        el.textContent = data.version;
+        el.title = 'Deployed commit';
+      }
+    })
+    .catch(function () {
+      // Silently ignore — version display is non-critical.
+    });
+}
+
 function getStoredDate(key) {
   const v = localStorage.getItem(key) || '';
   return isIsoDateOnly(v) ? v : '';
@@ -2718,3 +2735,4 @@ if (els.messageDateTo) {
 
 bootstrapFromToken();
 applyArchiveModeVisibility();
+loadAppVersion();

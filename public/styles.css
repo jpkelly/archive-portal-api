@@ -33,6 +33,19 @@ body {
   gap: 12px;
 }
 
+.topbar h1 .version-tag {
+  display: inline-block;
+  font-size: 0.55em;
+  font-weight: 400;
+  color: var(--muted);
+  background: var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-family: monospace;
+}
+
 .topbar h1 {
   margin: 0;
   font-size: 1.8rem;
