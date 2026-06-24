@@ -2675,7 +2675,7 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
         pollResult = stateResp.archive;
 
         // Refresh the admin table so the status badge updates live.
-        await loadAdminDomain(state.selectedDomain.id).catch(function () {});
+        await loadAdminDomain(domainId).catch(function () {});
 
         if (pollResult && pollResult.status !== 'running') break;
 
@@ -2704,7 +2704,7 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
   }
 
   els.adminArchiveStatus.textContent = `Archive complete: ${succeeded} succeeded, ${failed} failed.`;
-  await loadAdminDomain(state.selectedDomain.id);
+  await loadAdminDomain(domainId);
   els.adminArchiveStartBtn.disabled = false;
 });
 
