@@ -1492,28 +1492,69 @@ async function loadDomains() {
   if (state.user && state.user.role === 'admin') {
     populateAdminControls(state.selectedDomain);
   }
-  renderButtonList(
-    els.domainList,
-    state.domains,
-    function (d) {
-      var label = d.name + ' (' + d.status + ')';
-      if (d.cached_bytes > 0) {
-        label += ' \u00B7 ' + formatBytes(d.cached_bytes) + ' cached';
+
+  // Custom rendering for domains — includes purge buttons for cached content.
+  els.domainList.innerHTML = '';
+  if (!state.domains.length) {
+    clearList(els.domainList, 'No domains found.');
+  } else {
+    state.domains.forEach(function (d) {
+      var li = document.createElement('li');
+      li.style.cssText = 'margin-bottom:4px;display:flex;align-items:center;gap:4px;';
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = d.name + ' (' + d.status + ')' +
+        (d.cached_bytes > 0 ? ' \u00B7 ' + formatBytes(d.cached_bytes) + ' cached' : '');
+      btn.style.flex = '1 1 auto';
+      btn.style.textAlign = 'left';
+      btn.style.overflow = 'hidden';
+      btn.style.textOverflow = 'ellipsis';
+      btn.style.whiteSpace = 'nowrap';
+      if (d.id === state.domainId) btn.classList.add('selected');
+
+      btn.addEventListener('click', function () {
+        var buttons = els.domainList.querySelectorAll('button');
+        for (var i = 0; i < buttons.length; i++) {
+          buttons[i].classList.remove('selected');
+        }
+        btn.classList.add('selected');
+        state.domainId = d.id;
+        openDomain(d);
+      });
+      li.appendChild(btn);
+
+      // Purge button for domains with cached bodies.
+      if (d.cached_bytes > 0 && state.user && state.user.role === 'admin') {
+        var purgeBtn = document.createElement('button');
+        purgeBtn.type = 'button';
+        purgeBtn.className = 'button ghost';
+        purgeBtn.textContent = '\uD83D\uDDD1';
+        purgeBtn.title = 'Purge cached bodies (' + formatBytes(d.cached_bytes) + ')';
+        purgeBtn.style.cssText = 'flex:0 0 auto;width:1.5rem;height:1.5rem;padding:0;font-size:0.75rem;border-radius:999px;';
+        purgeBtn.addEventListener('click', async function (e) {
+          e.stopPropagation();
+          purgeBtn.textContent = '\u2026';
+          purgeBtn.disabled = true;
+          try {
+            await api('/domains/' + d.id + '/purge-bodies', {
+              method: 'POST',
+              body: JSON.stringify({ beforeDate: '2099-01-01' }),
+            });
+            setStatus('Purged cached bodies for ' + d.name + '.');
+            setTimeout(function () { loadDomains(); }, 1000);
+          } catch (err) {
+            setStatus('Purge failed: ' + (err.message || 'error'));
+            purgeBtn.textContent = '\uD83D\uDDD1';
+            purgeBtn.disabled = false;
+          }
+        });
+        li.appendChild(purgeBtn);
       }
-      return label;
-    },
-    function (domain, btn) {
-      var buttons = els.domainList.querySelectorAll('button');
-      for (var i = 0; i < buttons.length; i++) {
-        buttons[i].classList.remove('selected');
-      }
-      if (btn) btn.classList.add('selected');
-      state.domainId = domain.id;
-      openDomain(domain);
-    },
-    function (d) { return d.id; },
-    state.domainId
-  );
+
+      els.domainList.appendChild(li);
+    });
+  }
 }
 
 let accountRefreshTimer = null;
