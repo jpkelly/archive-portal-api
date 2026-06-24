@@ -1994,12 +1994,23 @@ async function loadAttachments(messageId) {
   list.innerHTML = '';
   list.classList.add('hidden');
 
+  // Only attempt if the message is known to have attachments.
+  var msg = state.currentMessage;
+  if (!msg || !msg.has_attachments) return;
+
+  // Show a loading indicator while the S3 tarball is downloaded and parsed.
+  list.innerHTML = '<p class="muted" style="padding:8px">Processing attachments\u2026</p>';
+  list.classList.remove('hidden');
+
   try {
     var data = await api('/messages/' + messageId + '/attachments');
     var attachments = data && data.attachments ? data.attachments : [];
-    if (!attachments.length) return;
+    list.innerHTML = '';
 
-    list.classList.remove('hidden');
+    if (!attachments.length) {
+      list.classList.add('hidden');
+      return;
+    }
 
     var heading = document.createElement('h4');
     heading.textContent = 'Attachments (' + attachments.length + ')';
