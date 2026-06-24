@@ -100,7 +100,7 @@ router.get('/:messageId/attachments', async (req, res) => {
     }
 
     const rows = await query(
-      `SELECT id, filename, content_type, size_bytes, created_at
+      `SELECT id, filename, mime_type, size_bytes, created_at
        FROM attachments
        WHERE message_id = ?
        ORDER BY filename ASC`,
@@ -120,7 +120,7 @@ router.get('/attachments/:attachmentId/download', async (req, res) => {
 
   try {
     const rows = await query(
-      `SELECT a.id, a.filename, a.content_type, a.size_bytes, a.content,
+      `SELECT a.id, a.filename, a.mime_type, a.size_bytes, a.content,
               m.id AS message_id
        FROM attachments a
        JOIN messages m ON m.id = a.message_id
@@ -143,7 +143,7 @@ router.get('/attachments/:attachmentId/download', async (req, res) => {
       return res.status(404).json({ error: 'Attachment content is empty' });
     }
 
-    res.set('Content-Type', att.content_type || 'application/octet-stream');
+    res.set('Content-Type', att.mime_type || 'application/octet-stream');
     res.set('Content-Length', String(content.length));
     res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(filename) + '"');
     res.set('Cache-Control', 'private, max-age=86400');

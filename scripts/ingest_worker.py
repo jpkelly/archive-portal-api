@@ -128,7 +128,7 @@ def _extract_attachment(part):
     return {
         'id': str(uuid.uuid4()),
         'filename': filename,
-        'content_type': content_type[:255],
+        'mime_type': content_type[:255],
         'size_bytes': size_bytes,
         'content_hex': content_hex,
     }
@@ -294,12 +294,12 @@ def build_sql(domain, username, s3_obj, records):
         # Insert attachment metadata + binary content for each extracted attachment.
         for att in r.get('attachments', []):
             lines.append(
-                "INSERT INTO attachments (id,message_id,filename,content_type,size_bytes,content,created_at) "
-                "VALUES (%s,%s,%s,%s,%d,0x%s,NOW()) "
-                "ON DUPLICATE KEY UPDATE filename=VALUES(filename), content_type=VALUES(content_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
+                "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
+                "VALUES (%s,%s,%s,%s,%d,0x%s,'db',NOW()) "
+                "ON DUPLICATE KEY UPDATE filename=VALUES(filename), mime_type=VALUES(mime_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
                 % (
                     q(att['id']), q(msg_uuid),
-                    q(att['filename']), q(att['content_type']),
+                    q(att['filename']), q(att['mime_type']),
                     att['size_bytes'], att['content_hex']
                 )
             )
