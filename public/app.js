@@ -1631,6 +1631,13 @@ async function loadAccounts(domainId) {
   }
   var accountList = data.accounts || [];
 
+  // Never blank the list during polling — keep existing items if the API
+  // returns empty (can happen transiently during ingest).
+  var hadItems = els.accountList.children.length > 0 && els.accountList.querySelector('button');
+  if (!accountList.length && hadItems) {
+    return;
+  }
+
   // Clear only after we have new data, so the list never blanks during loading.
   els.accountList.innerHTML = '';
   if (!accountList.length) {
