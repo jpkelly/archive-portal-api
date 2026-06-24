@@ -1977,16 +1977,41 @@ function applyViewMode() {
   els.toggleEmail.classList.toggle('active', !isPlain);
 }
 
+var loadMessageSeq = 0;
+
 async function loadMessage(messageId) {
-  // Show a loading indicator immediately while the body may be fetched from S3.
+  // Clear previous message state immediately.
+  if (els.attachmentList) {
+    els.attachmentList.innerHTML = '';
+    els.attachmentList.classList.add('hidden');
+  }
+  els.viewToggle.classList.add('hidden');
+
+  // Show a loading indicator while the body may be fetched from S3.
   els.messageDetail.classList.remove('hidden');
   els.messageDetailEmail.classList.add('hidden');
   els.messageDetail.textContent = 'Loading message\u2026';
   els.messageDetail.classList.add('muted');
 
-  const data = await api('/messages/' + messageId);
-  const m = data.message;
+  // Track request sequence to ignore stale responses.
+  var seq = ++loadMessageSeq;
+
+  var data;
+  try {
+    data = await api('/messages/' + messageId);
+  } catch (err) {
+    if (seq === loadMessageSeq) {
+      els.messageDetail.textContent = 'Failed to load message.';
+    }
+    return;
+  }
+
+  // Ignore if a newer request has already started.
+  if (seq !== loadMessageSeq) return;
+
+  var m = data.message;
   state.currentMessage = m;
+  state.currentMessageId = messageId;
   els.messageDetail.classList.remove('muted');
   els.viewToggle.classList.remove('hidden');
   renderPlainView(m);
