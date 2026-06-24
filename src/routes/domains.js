@@ -2017,7 +2017,7 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
     return res.status(500).json({ error: 'Could not delete messages', detail: err.message });
   } finally {
     if (tempDir) {
-      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      await fs.promises.rmdir(tempDir, { recursive: true }).catch(() => {});
     }
   }
 });
