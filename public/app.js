@@ -709,6 +709,23 @@ function renderAccountSyncStatus(accounts) {
   });
 }
 
+function updateArchiveSelectionStatus() {
+  if (!els.adminArchiveStatus) return;
+  const count = state.adminArchiveSelectedIds.size;
+  if (count === 0) {
+    els.adminArchiveStatus.textContent = 'No accounts selected.';
+    els.adminArchiveStatus.className = 'admin-archive-status muted';
+  } else {
+    const names = [];
+    for (const id of state.adminArchiveSelectedIds) {
+      const a = state.adminAccounts.find((acc) => String(acc.id) === id);
+      names.push(a ? a.username : id);
+    }
+    els.adminArchiveStatus.textContent = `${count} account${count !== 1 ? 's' : ''} selected: ${names.join(', ')}`;
+    els.adminArchiveStatus.className = 'admin-archive-status';
+  }
+}
+
 function renderArchiveAccountTable(accounts) {
   const container = els.adminArchiveAccountList;
   container.innerHTML = '';
@@ -760,6 +777,7 @@ function renderArchiveAccountTable(accounts) {
       } else {
         state.adminArchiveSelectedIds.delete(id);
       }
+      updateArchiveSelectionStatus();
     });
 
     // Label
@@ -2381,11 +2399,13 @@ els.adminArchiveMode.addEventListener('change', () => {
 els.adminArchiveSelectAll.addEventListener('click', () => {
   state.adminArchiveSelectedIds = new Set(state.adminAccounts.map((a) => String(a.id)));
   renderArchiveAccountTable(state.adminAccounts);
+  updateArchiveSelectionStatus();
 });
 
 els.adminArchiveSelectNone.addEventListener('click', () => {
   state.adminArchiveSelectedIds.clear();
   renderArchiveAccountTable(state.adminAccounts);
+  updateArchiveSelectionStatus();
 });
 
 els.adminArchiveDiscoverBtn.addEventListener('click', async () => {
