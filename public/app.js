@@ -1495,7 +1495,13 @@ async function loadDomains() {
   renderButtonList(
     els.domainList,
     state.domains,
-    function (d) { return d.name + ' (' + d.status + ')'; },
+    function (d) {
+      var label = d.name + ' (' + d.status + ')';
+      if (d.cached_bytes > 0) {
+        label += ' \u00B7 ' + formatBytes(d.cached_bytes) + ' cached';
+      }
+      return label;
+    },
     function (domain, btn) {
       var buttons = els.domainList.querySelectorAll('button');
       for (var i = 0; i < buttons.length; i++) {
@@ -1703,15 +1709,13 @@ async function loadAccounts(domainId) {
     const progressText = (typeof account.sync_progress === 'string' && account.sync_progress.trim())
       ? account.sync_progress.trim()
       : 'Indexing...';
-    const cachedBytes = Number(account.cached_bytes || 0);
-    const cachedLabel = cachedBytes > 0 ? ' \u00B7 ' + formatBytes(cachedBytes) + ' cached' : '';
     const label = isSyncing
       ? indicatorPrefix + account.username + ' \u2013 ' + progressText
       : isIndexedEmpty
         ? indicatorPrefix + account.username + ' (empty)'
         : msgCount === 0
           ? indicatorPrefix + account.username
-        : indicatorPrefix + account.username + ' (' + msgCount + ' msgs)' + cachedLabel;
+        : indicatorPrefix + account.username + ' (' + msgCount + ' msgs)';
 
     btn.textContent = label;
     btn.style.backgroundColor = bgColor || '';
@@ -1752,31 +1756,6 @@ async function loadAccounts(domainId) {
       await loadFolders(state.domainId, account.id);
     });
     
-    // Purge button: clear cached bodies for this account.
-    if (cachedBytes > 0 && state.user && state.user.role === 'admin') {
-      var purgeBtn = document.createElement('button');
-      purgeBtn.type = 'button';
-      purgeBtn.className = 'button ghost';
-      purgeBtn.textContent = '\uD83D\uDDD1';
-      purgeBtn.title = 'Purge cached bodies (' + formatBytes(cachedBytes) + ')';
-      purgeBtn.style.cssText = 'flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;padding:0;font-size:0.75rem;line-height:1;border-radius:999px;min-width:1.5rem;max-width:1.5rem;';
-      purgeBtn.addEventListener('click', async function (e) {
-        e.stopPropagation();
-        purgeBtn.textContent = '\u2026';
-        purgeBtn.disabled = true;
-        try {
-          await api('/domains/' + domainId + '/accounts/' + account.id + '/purge-bodies', { method: 'POST' });
-          setStatus('Purged cached bodies for ' + account.username + '.');
-          setTimeout(function () { loadAccounts(domainId); }, 1000);
-        } catch (err) {
-          setStatus('Purge failed: ' + (err.message || 'error'));
-          purgeBtn.textContent = '\uD83D\uDDD1';
-          purgeBtn.disabled = false;
-        }
-      });
-      li.appendChild(purgeBtn);
-    }
-
     // Sync button: show for not-yet-indexed (not syncing) or admin on any account
     const canSync = (!isIndexed && !isSyncing) || state.user?.role === 'admin';
     if (canSync) {

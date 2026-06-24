@@ -873,10 +873,28 @@ async function syncAllDomainAccountsFromPlesk() {
 router.get('/', async (req, res) => {
   try {
     const sql = req.auth.role === 'admin'
-      ? `SELECT d.id, d.name, d.status, d.created_at FROM domains d ORDER BY d.name ASC`
-      : `SELECT d.id, d.name, d.status, d.created_at
+      ? `SELECT d.id, d.name, d.status, d.created_at,
+                COALESCE(c.cached_bytes, 0) AS cached_bytes
+         FROM domains d
+         LEFT JOIN (
+           SELECT a.domain_id, SUM(COALESCE(LENGTH(m.body_text),0) + COALESCE(LENGTH(m.body_html),0) + COALESCE(LENGTH(m.preview_text),0)) AS cached_bytes
+           FROM messages m
+           JOIN folders f ON f.id = m.folder_id
+           JOIN mail_accounts a ON a.id = f.account_id
+           GROUP BY a.domain_id
+         ) c ON c.domain_id = d.id
+         ORDER BY d.name ASC`
+      : `SELECT d.id, d.name, d.status, d.created_at,
+                COALESCE(c.cached_bytes, 0) AS cached_bytes
          FROM domains d
          JOIN domain_members dm ON dm.domain_id = d.id
+         LEFT JOIN (
+           SELECT a.domain_id, SUM(COALESCE(LENGTH(m.body_text),0) + COALESCE(LENGTH(m.body_html),0) + COALESCE(LENGTH(m.preview_text),0)) AS cached_bytes
+           FROM messages m
+           JOIN folders f ON f.id = m.folder_id
+           JOIN mail_accounts a ON a.id = f.account_id
+           GROUP BY a.domain_id
+         ) c ON c.domain_id = d.id
          WHERE dm.user_id = ?
          ORDER BY d.name ASC`;
 
@@ -1620,17 +1638,10 @@ router.get('/:domainId/accounts', async (req, res) => {
     }
 
     const accounts = await query(
-      `SELECT a.id, a.username, a.display_name, a.message_count, a.folder_count, a.last_indexed_at,
-              COALESCE(b.cached_bytes, 0) AS cached_bytes
-       FROM mail_accounts a
-       LEFT JOIN (
-         SELECT f.account_id, SUM(COALESCE(LENGTH(m.body_text),0) + COALESCE(LENGTH(m.body_html),0) + COALESCE(LENGTH(m.preview_text),0)) AS cached_bytes
-         FROM messages m
-         JOIN folders f ON f.id = m.folder_id
-         GROUP BY f.account_id
-       ) b ON b.account_id = a.id
-       WHERE a.domain_id = ?
-       ORDER BY a.username ASC`,
+      `SELECT id, username, display_name, message_count, folder_count, last_indexed_at
+       FROM mail_accounts
+       WHERE domain_id = ?
+       ORDER BY username ASC`,
       [domainId]
     );
 
