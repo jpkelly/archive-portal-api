@@ -1496,8 +1496,14 @@ async function loadDomains() {
     els.domainList,
     state.domains,
     function (d) { return d.name + ' (' + d.status + ')'; },
-    async function (domain) {
-      await openDomain(domain);
+    function (domain, btn) {
+      var buttons = els.domainList.querySelectorAll('button');
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].classList.remove('selected');
+      }
+      if (btn) btn.classList.add('selected');
+      state.domainId = domain.id;
+      openDomain(domain);
     },
     function (d) { return d.id; },
     state.domainId
@@ -1810,7 +1816,12 @@ async function loadFolders(domainId, accountId) {
     els.folderList,
     data.folders || [],
     function (f) { return f.path + ' (' + (f.message_count || 0) + ')'; },
-    async function (folder) {
+    async function (folder, btn) {
+      var buttons = els.folderList.querySelectorAll('button');
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].classList.remove('selected');
+      }
+      if (btn) btn.classList.add('selected');
       state.folderId = folder.id;
       state.messageOffset = 0;
       state.messageQuery = '';
