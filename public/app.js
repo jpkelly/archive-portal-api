@@ -1823,8 +1823,10 @@ async function loadAccounts(domainId) {
       await loadFolders(state.domainId, account.id);
     });
     
-    // Sync button: show for not-yet-indexed (not syncing) or admin on any account
-    const canSync = (!isIndexed && !isSyncing) || state.user?.role === 'admin';
+    // Sync button: show only when not indexing and not already indexed with messages.
+    // For admins, show on any account that needs it — but never during an active ingest.
+    const canSync = !isSyncing && (!isIndexed || msgCount === 0) && !isNoArchiveEmpty;
+    if (canSync || (state.user?.role === 'admin' && !isSyncing && !isIndexedWithMessages)) {
     if (canSync) {
       const refreshBtn = document.createElement('button');
       refreshBtn.type = 'button';
