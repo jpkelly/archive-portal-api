@@ -1619,9 +1619,16 @@ async function loadAccounts(domainId) {
     els.accountDomainLabel.textContent = domain ? '— ' + domain.name : '';
   }
 
-  const data = await api(`/domains/${domainId}/accounts`);
-  const accountList = data.accounts || [];
-  
+  var data;
+  try {
+    data = await api('/domains/' + domainId + '/accounts');
+  } catch (err) {
+    // Keep the current list visible on transient fetch errors.
+    return;
+  }
+  var accountList = data.accounts || [];
+
+  // Clear only after we have new data, so the list never blanks during loading.
   els.accountList.innerHTML = '';
   if (!accountList.length) {
     clearList(els.accountList, 'No accounts found.');
