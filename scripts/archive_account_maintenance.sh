@@ -53,6 +53,7 @@ if [[ "$cmd" == "archive" ]]; then
   sized="$work/files.tsv"
   paths="$work/paths.txt"
 
+  echo "PROGRESS: finding pre-$to_date files"
   sudo find "$maildir" -type f \
     ! -path '*/tmp/*' \
     -newermt "$from_date" \
@@ -62,6 +63,7 @@ if [[ "$cmd" == "archive" ]]; then
   file_count="$(awk -F'\t' 'END{print NR+0}' "$sized")"
 
   if [[ "$file_count" -eq 0 ]]; then
+    echo "PROGRESS: no files found in range"
     echo "STATUS=no_files"
     echo "FILE_COUNT=0"
     echo "SOURCE_BYTES=0"
@@ -84,6 +86,7 @@ if [[ "$cmd" == "archive" ]]; then
   manifest_path="$work/$manifest_file"
 
   awk -F'\t' '{p=$2; sub("^/", "", p); print p}' "$sized" > "$paths"
+  echo "PROGRESS: tarring $file_count files ($(awk -F'\t' 'BEGIN{s=0}{s+=$1}END{printf "%.1f", s/1048576}' "$sized") MB)"
   if ! sudo tar -czf "$archive_path" -C / -T "$paths"; then
     echo "ERROR=Failed to create archive tarball"
     rm -rf "$work"
@@ -139,7 +142,9 @@ if [[ "$cmd" == "archive" ]]; then
   awk -F'\t' '{print "PATH=" $2}' "$sized" >> "$manifest_path"
 
   s3prefix="s3://smallgod-mail-archive/archive/${stamp}/${domain}/${user}"
+  echo "PROGRESS: uploading archive ($(numfmt --to=iec $archive_bytes 2>/dev/null || echo ${archive_bytes} bytes))"
   aws s3 cp "$archive_path" "$s3prefix/" --only-show-errors
+  echo "PROGRESS: uploading manifest"
   aws s3 cp "$checksum_path" "$s3prefix/" --only-show-errors
   aws s3 cp "$manifest_path" "$s3prefix/" --only-show-errors
 

@@ -1799,8 +1799,21 @@ router.post('/:domainId/accounts/:accountId/archive/create', async (req, res) =>
           );
 
           let stdout = '';
+          let stdoutBuffer = '';
           child.stdout.on('data', (chunk) => {
             stdout += chunk.toString();
+            // Forward PROGRESS lines to the UI, same pattern as ingest worker.
+            stdoutBuffer += chunk.toString();
+            const lines = stdoutBuffer.split('\n');
+            stdoutBuffer = lines.pop() || '';
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed) continue;
+              const marker = 'PROGRESS:';
+              if (trimmed.startsWith(marker)) {
+                setIngestProgress(accountId, trimmed.slice(marker.length).trim());
+              }
+            }
           });
 
           child.stderr.on('data', () => {
@@ -1867,6 +1880,7 @@ router.post('/:domainId/accounts/:accountId/archive/create', async (req, res) =>
             archive_source_bytes: Number(parsed.SOURCE_BYTES || 0),
             archive_bytes: Number(parsed.ARCHIVE_BYTES || 0),
           });
+          clearIngestProgressLater(accountId, 10000);
         } catch (err) {
           const current = await getArchiveState(accountId).catch(() => null);
           if (!current || current.job_id !== jobId) return;
@@ -1879,6 +1893,8 @@ router.post('/:domainId/accounts/:accountId/archive/create', async (req, res) =>
             completed_at: new Date().toISOString(),
             error: err.message,
           }).catch(() => {});
+          setIngestProgress(accountId, 'failed');
+          clearIngestProgressLater(accountId, 30000);
         }
       })().catch((err) => console.error('[archive create] unhandled error:', err.message));
     });
