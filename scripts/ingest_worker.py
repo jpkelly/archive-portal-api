@@ -108,10 +108,12 @@ def html_to_text(html):
     return s.strip()
 
 
-def _extract_attachment(part):
-    """Extract attachment metadata and decoded binary content from a MIME part.
-    Returns a dict with id, filename, content_type, size_bytes, content_hex,
-    or None if the attachment exceeds MAX_ATTACHMENT_BYTES."""
+def _extract_attachment(part, extract_content=False):
+    """Extract attachment metadata (always) and optionally binary content.
+    When extract_content is False, content_hex will be None — the attachment
+    row is still created so the UI can list it, and content is served on-demand
+    from the S3 tarball on first download.
+    Returns a dict, or None if the attachment exceeds MAX_ATTACHMENT_BYTES."""
     filename = part.get_filename() or 'unnamed'
     content_type = (part.get_content_type() or 'application/octet-stream')
     try:
@@ -129,7 +131,10 @@ def _extract_attachment(part):
     if size_bytes == 0:
         return None
 
-    content_hex = binascii.hexlify(payload).decode('ascii')
+    content_hex = None
+    if extract_content:
+        content_hex = binascii.hexlify(payload).decode('ascii')
+
     return {
         'id': str(uuid.uuid4()),
         'filename': filename,
@@ -169,10 +174,12 @@ def parse_msg(raw):
             ctype = (p.get_content_type() or '').lower()
             if cdisp == 'attachment' or (cdisp == 'inline' and p.get_filename()):
                 has_attach = 1
-                if EXTRACT_ATTACHMENTS[0]:
-                    att = _extract_attachment(p)
-                    if att is not None:
-                        attachments.append(att)
+                # Always extract metadata so the UI can list attachments.
+                # Binary content is only stored when --extract-attachments is passed;
+                # otherwise it is served on-demand from the S3 tarball on first download.
+                att = _extract_attachment(p, extract_content=EXTRACT_ATTACHMENTS[0])
+                if att is not None:
+                    attachments.append(att)
                 continue
             if ctype == 'text/plain':
                 try:
@@ -297,16 +304,20 @@ def build_sql(domain, username, s3_obj, records):
             )
         )
 
-        # Insert attachment metadata + binary content for each extracted attachment.
+        # Insert attachment metadata (+ optional binary content) for each attachment.
         for att in r.get('attachments', []):
+            if att['content_hex'] is not None:
+                content_sql = '0x' + att['content_hex']
+            else:
+                content_sql = 'NULL'
             lines.append(
                 "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
-                "VALUES (%s,%s,%s,%s,%d,0x%s,'db',NOW()) "
+                "VALUES (%s,%s,%s,%s,%d,%s,'db',NOW()) "
                 "ON DUPLICATE KEY UPDATE filename=VALUES(filename), mime_type=VALUES(mime_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
                 % (
                     q(att['id']), q(msg_uuid),
                     q(att['filename']), q(att['mime_type']),
-                    att['size_bytes'], att['content_hex']
+                    att['size_bytes'], content_sql
                 )
             )
 
