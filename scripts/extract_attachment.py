@@ -118,7 +118,20 @@ def main():
             break
 
         if found is None:
-            die(2, 'Attachment not found in message: ' + target_filename)
+            # Debug: list what we did find to help diagnose mismatches.
+            found_names = []
+            for part in msg.walk():
+                cdisp = (part.get_content_disposition() or '').lower()
+                fn = part.get_filename() or ''
+                if cdisp == 'attachment' or (cdisp == 'inline' and fn):
+                    try:
+                        pl = part.get_payload(decode=True)
+                        sz = len(pl) if pl else 0
+                    except Exception:
+                        sz = -1
+                    found_names.append('%s (%d bytes)' % (fn, sz))
+            die(2, 'Attachment not found: "%s" (wanted %d bytes). Found: %s'
+                % (target_filename, target_size, ', '.join(found_names) if found_names else 'none'))
 
         part, payload = found
         content_type = part.get_content_type() or 'application/octet-stream'
