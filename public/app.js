@@ -1642,6 +1642,7 @@ async function queueReindexAllAccessibleAccounts() {
   }
 
   let queued = 0;
+  let alreadyIndexed = 0;
   let noArchive = 0;
   let failed = 0;
 
@@ -1656,6 +1657,13 @@ async function queueReindexAllAccessibleAccounts() {
     }
 
     for (const account of accounts) {
+      // Skip accounts already indexed — re-ingesting them is unnecessary
+      // and briefly zeroes the message count during the transaction.
+      if (account.sync_status === 'indexed' && account.message_count > 0) {
+        alreadyIndexed += 1;
+        continue;
+      }
+
       syncingAccounts.add(account.id);
       try {
         const result = await api(`/domains/${domain.id}/accounts/${account.id}/ingest`, {
@@ -1679,7 +1687,7 @@ async function queueReindexAllAccessibleAccounts() {
   }
 
   setStatus(
-    `Info: Login re-index queued for ${queued} accounts (${noArchive} without archive, ${failed} failed).`,
+    `Info: Login re-index: ${queued} queued, ${alreadyIndexed} already indexed, ${noArchive} without archive, ${failed} failed.`,
     'info'
   );
 }
