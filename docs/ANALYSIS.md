@@ -1,8 +1,9 @@
+
 # Archive Portal — Analysis & Observations
 
-> **Status: observations only. No code has been changed based on this document.**
-> Line references are approximate and may drift as the code evolves; use the function
-> names as the durable anchor. See [`PLAN.md`](./PLAN.md) for the proposed roadmap.
+> **Status: several items resolved as of 2026-06-23.** See resolution notes under each
+> item below. Line references are approximate and may drift as the code evolves; use the
+> function names as the durable anchor. See [`PLAN.md`](./PLAN.md) for the current roadmap.
 
 This is a read-only assessment of the codebase as of commit `1af9235`. The system is
 deployed and working; these are items to consider when next editing the relevant areas,
@@ -41,6 +42,10 @@ Deleting a set that may not match the verified archive undercuts that premise.
 **Direction:** Delete exactly the paths in the verified manifest (download/keep the
 `.manifest.txt` path list and delete from it), rather than a fresh `find`.
 
+**✅ Resolved:** The `delete` command now reads paths from the verified manifest file
+(`manifest_source`), not from a fresh `find`. See the `delete` branch in
+`scripts/archive_account_maintenance.sh`.
+
 ### 2. BSD/macOS-only commands in a script that runs on Linux (CentOS)
 **Where:** `scripts/archive_account_maintenance.sh:90` `stat -f '%z'`, and `:91` `sha256 -q`.
 
@@ -56,6 +61,10 @@ not what they claim. Worth inspecting a real run's `.sha256` and manifest `archi
 **Direction:** Use GNU equivalents; consider `set -e` (or explicit error checks) so a failed
 checksum aborts rather than silently producing an empty file.
 
+**✅ Resolved:** The script now uses `stat -c '%s'` and `sha256sum` (GNU/Linux).
+Explicit error checks were added: the script verifies the checksum regex and file
+size before proceeding, failing fast if either is invalid.
+
 ### 3. Discover only scans the single latest archive run
 **Where:** `getLatestArchiveTimestamp()` in `src/routes/domains.js` (~L257–273), used by
 `findAccountArchivePath` (~L329), `discover` (~L1340), and `discover-all` (~L496).
@@ -68,6 +77,11 @@ found or re-registered.
 
 **Direction:** Scan all timestamp prefixes (or the newest *per account*), not just the
 single latest run.
+
+**✅ Resolved:** `listArchiveTimestamps()` returns all archive run timestamps sorted
+newest-first. `findAccountArchivePath`, `discover`, and `discover-all` now iterate
+timestamps (capped at the 20 newest runs to bound S3 API calls).
+`getLatestArchiveTimestamp()` is preserved as a wrapper returning `timestamps[0]`.
 
 ### 4. Logout resets usage stats globally for admins
 **Where:** `resetUsageStatsForUser` in `src/routes/auth.js` (L17–42); called by `logout`
@@ -83,22 +97,30 @@ counts.
 **Direction:** Confirm intent. If the goal is per-session cache cleanup, scope it to temp
 artifacts rather than the persistent stats columns.
 
+**✅ Resolved:** The logout handler no longer calls `resetUsageStatsForUser`; it only
+purges the temp archive cache (`removeDirRecursive`). The explicit `reset-usage`
+routes are unchanged and still available as a deliberate admin action.
+
 ### 5. Smaller hardening items
-- **Open CORS:** `src/app.js:16` `app.use(cors())` allows any origin. Consider restricting
-  to the portal origin.
-- **No login rate limiting:** `POST /auth/login` (`src/routes/auth.js:59`) — consider basic
-  throttling/lockout.
+- **Open CORS:** `src/app.js:16` `app.use(cors())` allows any origin.
+  **✅ Resolved:** CORS is now restricted to origins in the `CORS_ORIGINS` env var
+  (default: `https://archive.smallgod.net`).
+- **No login rate limiting:** `POST /auth/login` (`src/routes/auth.js:59`).
+  **✅ Resolved:** In-memory fixed-window rate limiter added: 10 attempts per 15 min
+  per ip+email pair; returns 429 when exceeded; counter cleared on success.
 - **String-built SQL in ingest:** `scripts/ingest_worker.py` `build_sql` (~L194–267) uses
   hand-rolled escaping (`esc`, L45) piped to `plesk db`. Prefer parameterized queries where
-  feasible.
+  feasible. *(Still open — deferred; requires runtime/credentials changes best validated on
+  the production server.)*
 - **Node 12 is EOL:** runtime is years past end-of-life; a managed Node upgrade path is worth
-  planning.
+  planning. *(Still open.)*
 
 ## Enhancement opportunities
 
-- **Disk-usage reporting** — rank mailboxes/domains by size and show projected space freed for
-  a given age threshold. This is the original "find the space hogs" need and is a small step
-  from existing code (the archive script already computes `SOURCE_BYTES`/`FILE_COUNT` for a
-  date range). Detailed in [`PLAN.md`](./PLAN.md).
+- **Disk-usage reporting** — ✅ **Shipped.** The `report` command in
+  `scripts/archive_account_maintenance.sh` does a single `find -printf '%s\t%T@'` pass
+  with one `awk` for all aggregates (totals, age buckets, reclaimable). A `mail_usage`
+  table (`migrations/003_mail_usage.sql`) persists results. The frontend shows a sortable
+  usage table with per-mailbox size, age breakdown, and reclaimable-before-date projections.
 - **Restore flow** — the catalog (`mail_account_archives`) + S3 tarballs make a one-click
-  restore (pull tarball, re-deliver to maildir) feasible; not currently exposed.
+  restore (pull tarball, re-deliver to maildir) feasible; not currently exposed. *(Still open.)*

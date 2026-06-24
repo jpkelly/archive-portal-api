@@ -1,24 +1,24 @@
 # Archive Portal — Plan & Roadmap
 
-> Companion to [`ANALYSIS.md`](./ANALYSIS.md). This is a proposed plan, not a record of
-> completed work. Nothing here has been implemented yet.
+> Companion to [`ANALYSIS.md`](./ANALYSIS.md).
+> **Last updated: 2026-06-23.** Plan partially implemented — see Status column below.
 
 ## Prioritized roadmap
 
 Ordered by a mix of data-safety impact and value. Each item links to the relevant
 observation in `ANALYSIS.md`.
 
-| Priority | Item | Type | Why now |
-|----------|------|------|---------|
-| **P0** | Delete from the verified manifest, not a fresh `find` (Analysis #1) | Safety fix | Core safety premise; risk of deleting un-archived mail |
-| **P0** | Fix BSD-isms `stat -f` / `sha256` → GNU; add error checks (Analysis #2) | Correctness fix | Checksums/sizes are likely wrong today |
-| **P1** | Disk-usage reporting (feature below) | Feature | The original "server is full" need; high value, low risk |
-| **P1** | Discover across all archive runs, not just latest (Analysis #3) | Bug fix | Older archives currently invisible |
-| **P2** | Scope logout/reset-usage so it doesn't wipe global stats (Analysis #4) | Bug fix | Unintended data loss on routine action |
-| **P2** | Hardening: CORS, login throttling, parameterized ingest SQL (Analysis #5) | Hardening | Defense-in-depth |
-| **P3** | One-click restore from S3 | Feature | Rounds out the lifecycle |
-| **P3** | Plan a Node 12 → supported runtime upgrade | Maintenance | Runtime is EOL |
-| **P1** | Version-control the surrounding ops artifacts (esp. `migrations/`) | Maintenance | App-critical schema is currently untracked (see below) |
+| Priority | Item | Type | Status | Why now |
+|----------|------|------|--------|---------|
+| **P0** | Delete from the verified manifest, not a fresh `find` (Analysis #1) | Safety fix | ✅ Done | Core safety premise; risk of deleting un-archived mail |
+| **P0** | Fix BSD-isms `stat -f` / `sha256` → GNU; add error checks (Analysis #2) | Correctness fix | ✅ Done | Checksums/sizes are likely wrong today |
+| **P1** | Disk-usage reporting (feature below) | Feature | ✅ Done | The original "server is full" need; high value, low risk |
+| **P1** | Discover across all archive runs, not just latest (Analysis #3) | Bug fix | ✅ Done | Older archives currently invisible |
+| **P2** | Scope logout/reset-usage so it doesn't wipe global stats (Analysis #4) | Bug fix | ✅ Done | Unintended data loss on routine action |
+| **P2** | Hardening: CORS, login throttling, parameterized ingest SQL (Analysis #5) | Hardening | 🟡 Partial (CORS + rate-limit done; ingest SQL open) | Defense-in-depth |
+| **P3** | One-click restore from S3 | Feature | Open | Rounds out the lifecycle |
+| **P3** | Plan a Node 12 → supported runtime upgrade | Maintenance | Open | Runtime is EOL |
+| **P1** | Version-control the surrounding ops artifacts (esp. `migrations/`) | Maintenance | Open | App-critical schema is currently untracked (see below) |
 
 Suggested first move: the two **P0** items are small, contained, and reduce real risk —
 good candidates before building new features. The disk-usage feature (P1) is the most
