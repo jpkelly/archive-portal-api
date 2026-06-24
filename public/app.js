@@ -160,6 +160,7 @@ const els = {
   status: document.getElementById('status'),
   domainList: document.getElementById('domainList'),
   accountList: document.getElementById('accountList'),
+  accountDomainLabel: document.getElementById('accountDomainLabel'),
   folderList: document.getElementById('folderList'),
   messageList: document.getElementById('messageList'),
   messageSearch: document.getElementById('messageSearch'),
@@ -1612,6 +1613,12 @@ const syncingAccounts = new Set();
 const noArchiveAccounts = new Set();
 
 async function loadAccounts(domainId) {
+  // Show which domain is selected in the accounts panel heading.
+  if (els.accountDomainLabel) {
+    var domain = state.domains.find(function (d) { return d.id === domainId; });
+    els.accountDomainLabel.textContent = domain ? '— ' + domain.name : '';
+  }
+
   const data = await api(`/domains/${domainId}/accounts`);
   const accountList = data.accounts || [];
   

@@ -195,6 +195,12 @@ input {
   margin-bottom: 10px;
 }
 
+.panel-subtitle {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+
 .messages-header {
   display: flex;
   justify-content: space-between;
