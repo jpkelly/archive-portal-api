@@ -90,6 +90,7 @@ def main():
         # 3. Parse the .eml and find the matching attachment.
         msg = BytesParser(policy=policy.default).parsebytes(raw_email)
         found = None
+        found_size = -1
 
         for part in msg.walk():
             cdisp = (part.get_content_disposition() or '').lower()
@@ -100,7 +101,9 @@ def main():
             if part_filename != target_filename:
                 continue
 
-            # Filename matches — verify size is close (within 10% or exact).
+            # Prefer attachment-disposition parts over inline, and the
+            # largest payload among duplicates (handles inline previews).
+            is_attachment = (cdisp == 'attachment')
             try:
                 payload = part.get_payload(decode=True)
                 if payload is None:
@@ -109,13 +112,13 @@ def main():
                 continue
 
             part_size = len(payload)
-            if target_size > 0:
-                size_diff = abs(part_size - target_size)
-                if size_diff > max(target_size * 0.1, 1024):
-                    continue  # Size mismatch beyond tolerance.
-
-            found = (part, payload)
-            break
+            if is_attachment and part_size >= found_size:
+                found = (part, payload)
+                found_size = part_size
+            elif not is_attachment and found is None:
+                # Fall back to inline only if no attachment-disposition match exists.
+                found = (part, payload)
+                found_size = part_size
 
         if found is None:
             # Debug: list what we did find to help diagnose mismatches.
