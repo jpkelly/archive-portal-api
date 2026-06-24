@@ -1804,10 +1804,29 @@ async function loadAccounts(domainId) {
     btn.style.borderRadius = '4px';
     btn.classList.toggle('selected', isSelected);
     btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+
+    // Show archive date range as a subtitle when available.
+    var archiveDateLabel = '';
+    if (account.archive_state && account.archive_state.beforeDate) {
+      archiveDateLabel = 'before ' + account.archive_state.beforeDate;
+    } else if (account.archive_state && account.archive_state.range_label) {
+      archiveDateLabel = account.archive_state.range_label;
+    }
+    if (archiveDateLabel && isIndexedWithMessages && !isSyncing) {
+      btn.innerHTML = '<span style="display:block">' + label + '</span>'
+        + '<span style="display:block;font-size:0.7rem;opacity:0.6">' + archiveDateLabel + '</span>';
+    }
+
     if (isSyncing) {
       btn.title = 'Indexing in progress';
     } else if (isIndexedWithMessages) {
-      btn.title = 'Indexed';
+      var archiveLabel = '';
+      if (account.archive_state && account.archive_state.beforeDate) {
+        archiveLabel = '\nArchive: before ' + account.archive_state.beforeDate;
+      } else if (account.archive_state && account.archive_state.range_label) {
+        archiveLabel = '\nArchive: ' + account.archive_state.range_label;
+      }
+      btn.title = 'Indexed' + archiveLabel;
     } else if (isIndexed && msgCount === 0) {
       btn.title = 'Indexed (empty)';
     } else {
