@@ -696,9 +696,23 @@ function renderAccountSyncStatus(accounts) {
       ? new Date(account.indexed_at).toLocaleDateString()
       : 'never';
     const archive = account.archive_state;
-    const archiveStr = archive
-      ? (archive.verified ? ' | archive: verified' : ` | archive: ${archive.status || 'pending'}`)
-      : ' | archive: none';
+    var archiveStr = '';
+    if (archive) {
+      var parts = [];
+      if (archive.verified) {
+        parts.push('verified');
+      } else {
+        parts.push(archive.status || 'pending');
+      }
+      if (archive.beforeDate) {
+        parts.push('before ' + archive.beforeDate);
+      } else if (archive.range_label) {
+        parts.push(archive.range_label);
+      }
+      archiveStr = ' | archive: ' + parts.join(', ');
+    } else {
+      archiveStr = ' | archive: none';
+    }
     info.textContent = `${status} ${account.username} – ${msgStr} (${timeStr})${archiveStr}`;
     info.title = account.indexed_at
       ? `Last indexed: ${new Date(account.indexed_at).toLocaleString()}`
