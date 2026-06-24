@@ -1847,7 +1847,7 @@ async function loadMessages(folderId) {
       }
       if (btn) btn.classList.add('selected');
       state.currentMessageId = message.id;
-      loadMessage(message.id);
+      loadMessage(message.id, message);
     },
     function (m) { return m.id; },
     state.currentMessageId
@@ -1979,7 +1979,7 @@ function applyViewMode() {
 
 var loadMessageSeq = 0;
 
-async function loadMessage(messageId) {
+async function loadMessage(messageId, preview) {
   // Clear previous message state immediately.
   if (els.attachmentList) {
     els.attachmentList.innerHTML = '';
@@ -1987,11 +1987,23 @@ async function loadMessage(messageId) {
   }
   els.viewToggle.classList.add('hidden');
 
-  // Show a loading indicator while the body may be fetched from S3.
-  els.messageDetail.classList.remove('hidden');
+  // Render headers instantly from the list data we already have.
+  els.messageDetail.classList.remove('hidden', 'muted');
   els.messageDetailEmail.classList.add('hidden');
-  els.messageDetail.textContent = 'Loading message\u2026';
-  els.messageDetail.classList.add('muted');
+  if (preview) {
+    var headerLines = [
+      'Subject: ' + (preview.subject || '(no subject)'),
+      'From: ' + (preview.from_name ? preview.from_name + ' <' + preview.from_email + '>' : (preview.from_email || '')),
+      'Sent: ' + (preview.sent_at || preview.received_at || ''),
+      '',
+      'Loading body\u2026',
+    ];
+    els.messageDetail.textContent = headerLines.join('\n');
+    els.messageDetail.classList.add('muted');
+  } else {
+    els.messageDetail.textContent = 'Loading message\u2026';
+    els.messageDetail.classList.add('muted');
+  }
 
   // Track request sequence to ignore stale responses.
   var seq = ++loadMessageSeq;
