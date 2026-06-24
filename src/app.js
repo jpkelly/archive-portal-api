@@ -4,6 +4,7 @@ const fs = require('fs');
 const cors = require('cors');
 const helmet = require('helmet');
 
+const { corsOrigins } = require('./config');
 const healthRouter = require('./routes/health');
 const authRouter = require('./routes/auth');
 const domainsRouter = require('./routes/domains');
@@ -46,7 +47,7 @@ function sendIndexHtml(res) {
 }
 
 app.use(helmet());
-app.use(cors());
+app.use(cors({ origin: corsOrigins }));
 app.use(express.json({ limit: '1mb' }));
 
 app.use('/health', healthRouter);
