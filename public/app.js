@@ -1495,10 +1495,12 @@ async function loadDomains() {
   renderButtonList(
     els.domainList,
     state.domains,
-    (d) => `${d.name} (${d.status})`,
-    async (domain) => {
+    function (d) { return d.name + ' (' + d.status + ')'; },
+    async function (domain) {
       await openDomain(domain);
-    }
+    },
+    function (d) { return d.id; },
+    state.domainId
   );
 }
 
@@ -1807,8 +1809,8 @@ async function loadFolders(domainId, accountId) {
   renderButtonList(
     els.folderList,
     data.folders || [],
-    (f) => `${f.path} (${f.message_count || 0})`,
-    async (folder) => {
+    function (f) { return f.path + ' (' + (f.message_count || 0) + ')'; },
+    async function (folder) {
       state.folderId = folder.id;
       state.messageOffset = 0;
       state.messageQuery = '';
@@ -1818,7 +1820,9 @@ async function loadFolders(domainId, accountId) {
       els.messageDateFrom.value = '';
       els.messageDateTo.value = '';
       await loadMessages(folder.id);
-    }
+    },
+    function (f) { return f.id; },
+    state.folderId
   );
 }
 
