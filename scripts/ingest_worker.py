@@ -37,6 +37,11 @@ AWS_BIN = '/usr/bin/aws'
 # Larger attachments are skipped with a warning.
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
+# Default to safe mode: attachment content extraction is opt-in.
+# Pass --extract-attachments to enable binary content storage.
+# Wrapped in a list to allow mutation from __main__ without 'global' keyword.
+EXTRACT_ATTACHMENTS = [False]
+
 
 def emit_progress(text):
     print('PROGRESS:' + text, flush=True)
@@ -164,9 +169,10 @@ def parse_msg(raw):
             ctype = (p.get_content_type() or '').lower()
             if cdisp == 'attachment' or (cdisp == 'inline' and p.get_filename()):
                 has_attach = 1
-                att = _extract_attachment(p)
-                if att is not None:
-                    attachments.append(att)
+                if EXTRACT_ATTACHMENTS[0]:
+                    att = _extract_attachment(p)
+                    if att is not None:
+                        attachments.append(att)
                 continue
             if ctype == 'text/plain':
                 try:
@@ -385,12 +391,15 @@ def ingest_from_s3(s3_path, domain, username):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 4:
-        print('Usage: ingest_worker.py <domain> <local_username> <s3_path>')
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    if '--extract-attachments' in sys.argv:
+        EXTRACT_ATTACHMENTS[0] = True
+    if len(args) < 3:
+        print('Usage: ingest_worker.py [--extract-attachments] <domain> <local_username> <s3_path>')
         sys.exit(1)
-    domain = sys.argv[1]
-    local_user = sys.argv[2]
-    s3_path = sys.argv[3]
+    domain = args[0]
+    local_user = args[1]
+    s3_path = args[2]
     emit_progress('1/5 queued')
     username = local_user if '@' in local_user else ('%s@%s' % (local_user, domain))
     count = ingest_from_s3(s3_path, domain, username)
