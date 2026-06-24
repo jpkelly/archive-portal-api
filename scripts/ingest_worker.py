@@ -383,6 +383,7 @@ def build_repair_sql(domain, username):
     safety net or via --fix-counts.
     """
     lines = [
+        "USE mail_archive;",
         "SET @domain_id = (SELECT id FROM domains WHERE name = %s LIMIT 1);" % q(domain),
         "SET @account_id = (SELECT id FROM mail_accounts WHERE domain_id=@domain_id AND username=%s LIMIT 1);" % q(username),
         "UPDATE folders f SET f.message_count=(SELECT COUNT(*) FROM messages m WHERE m.folder_id=f.id) WHERE f.account_id=@account_id;",
