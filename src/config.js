@@ -12,8 +12,11 @@ function requireEnv(name, fallback) {
   return value;
 }
 
-// Read the deployed git commit SHA once at startup. Falls back to package.json
-// version or 'unknown' when .git is absent (e.g. non-Plesk environments).
+// Read the deployed git commit SHA once at startup. Tries in order:
+// 1. Local git repo (development)
+// 2. Plesk Git extension CLI (production — .git is not deployed)
+// 3. package.json version
+// 4. 'unknown'
 var appVersion = 'unknown';
 try {
   appVersion = String(execSync('git rev-parse --short HEAD', {
@@ -22,13 +25,24 @@ try {
   })).trim();
 } catch (_) {
   try {
-    // Fallback: read version from package.json
-    var pkg = require('../package.json');
-    if (pkg && pkg.version) {
-      appVersion = 'v' + pkg.version;
+    // Plesk stores the deployed commit; query it via the CLI.
+    var pleskOut = String(execSync(
+      'sudo plesk ext git --get-last-commit -domain archive.smallgod.net -name archive-portal-api',
+      { encoding: 'utf8', timeout: 5000 }
+    )).trim();
+    var m = pleskOut.match(/^commit\s+([0-9a-f]{7,})/m);
+    if (m) {
+      appVersion = m[1].slice(0, 7);
     }
   } catch (__) {
-    // Keep 'unknown'.
+    try {
+      var pkg = require('../package.json');
+      if (pkg && pkg.version) {
+        appVersion = 'v' + pkg.version;
+      }
+    } catch (___) {
+      // Keep 'unknown'.
+    }
   }
 }
 
