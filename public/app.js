@@ -1835,6 +1835,13 @@ async function loadAccounts(domainId) {
       
       refreshBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        e.preventDefault();
+        // Instantly disable to prevent double-clicks.
+        if (refreshBtn.disabled) return;
+        refreshBtn.disabled = true;
+        refreshBtn.style.opacity = '0.4';
+        refreshBtn.style.cursor = 'not-allowed';
+
         // Immediately show yellow / indexing state
         syncingAccounts.add(account.id);
         btn.style.backgroundColor = '#fff3cd';
