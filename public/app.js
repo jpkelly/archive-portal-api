@@ -1826,7 +1826,7 @@ async function loadAccounts(domainId) {
     // Sync button: show only when not indexing and not already indexed with messages.
     // For admins, show on any account that needs it — but never during an active ingest.
     const canSync = !isSyncing && (!isIndexed || msgCount === 0) && !isNoArchiveEmpty;
-    if (canSync || (state.user?.role === 'admin' && !isSyncing && !isIndexedWithMessages)) {
+    if (canSync || (state.user && state.user.role === 'admin' && !isSyncing && !isIndexedWithMessages)) {
     if (canSync) {
       const refreshBtn = document.createElement('button');
       refreshBtn.type = 'button';
