@@ -2019,7 +2019,7 @@ async function loadAttachments(messageId) {
       link.className = 'attachment-download button ghost';
       link.textContent = 'Download';
       link.addEventListener('click', function () {
-        downloadAttachment(att.id, att.filename);
+        downloadAttachment(att.id, att.filename, link);
       });
 
       row.appendChild(info);
@@ -2031,7 +2031,12 @@ async function loadAttachments(messageId) {
   }
 }
 
-async function downloadAttachment(attachmentId, filename) {
+async function downloadAttachment(attachmentId, filename, btn) {
+  if (!btn) return;
+  var originalText = btn.textContent;
+  btn.textContent = 'Downloading\u2026';
+  btn.disabled = true;
+
   try {
     var headers = {};
     if (state.token) {
@@ -2056,6 +2061,9 @@ async function downloadAttachment(attachmentId, filename) {
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   } catch (err) {
     alert('Download failed: ' + (err.message || 'Unknown error'));
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = false;
   }
 }
 
