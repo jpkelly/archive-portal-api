@@ -738,6 +738,18 @@ async function queueIngest(req, res) {
     const domain = user.name;
     const username = user.username.split('@')[0];
 
+    // Don't spawn duplicate workers — if one is already running for this
+    // account, the UI will see its progress.  Two concurrent ingests on
+    // the same tarball waste I/O and confuse the progress display.
+    const existing = getIngestProgress(accountId);
+    if (existing) {
+      return res.json({
+        ok: false,
+        error: 'An ingest job is already running for this account',
+        account_id: accountId,
+      });
+    }
+
     const s3Path = await findAccountArchivePath(domain, username);
     if (!s3Path) {
       return res.json({
