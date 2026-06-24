@@ -751,7 +751,7 @@ function renderArchiveAccountTable(accounts) {
     } else {
       const total = accounts.length;
       const archived = accounts.filter((a) => a.archive_state).length;
-      const deleted = accounts.filter((a) => a.archive_state && a.archive_state.deletion_status === 'deleted').length;
+      const deleted = accounts.filter((a) => a.archive_state && (a.archive_state.deletion_status === 'deleted' || a.archive_state.deletion_status === 'completed')).length;
       const pending = total - archived;
       const parts = [`${archived} of ${total} accounts archived`];
       if (deleted) parts.push(`${deleted} messages deleted`);
@@ -831,7 +831,7 @@ function renderArchiveAccountTable(accounts) {
     // Deletion status badge
     const delBadge = document.createElement('span');
     delBadge.className = 'archive-status-badge';
-    if (archive && archive.deletion_status === 'deleted') {
+    if (archive && (archive.deletion_status === 'deleted' || archive.deletion_status === 'completed')) {
       delBadge.textContent = 'Msgs Deleted';
       delBadge.dataset.state = 'deleted';
     } else if (archive && archive.deletion_status === 'ready') {
@@ -2600,7 +2600,7 @@ els.adminArchiveResetBtn.addEventListener('click', async () => {
   }
   const hasDeleted = withRecords.some((id) => {
     const a = state.adminAccounts.find((acc) => String(acc.id) === id);
-    return a && a.archive_state && a.archive_state.deletion_status === 'deleted';
+    return a && a.archive_state && (a.archive_state.deletion_status === 'deleted' || a.archive_state.deletion_status === 'completed');
   });
   const names = withRecords.map((id) => {
     const a = state.adminAccounts.find((acc) => String(acc.id) === id);
@@ -2660,11 +2660,11 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
   if (withExisting.length) {
     const alreadyDeleted = withExisting.filter((id) => {
       const a = state.adminAccounts.find((acc) => String(acc.id) === id);
-      return a.archive_state.deletion_status === 'deleted';
+      return a.archive_state.deletion_status === 'deleted' || a.archive_state.deletion_status === 'completed';
     });
     const lines = withExisting.map((id) => {
       const a = state.adminAccounts.find((acc) => String(acc.id) === id);
-      const del = a.archive_state.deletion_status === 'deleted' ? ' \u26a0 messages already deleted' : '';
+      const del = (a.archive_state.deletion_status === 'deleted' || a.archive_state.deletion_status === 'completed') ? ' \u26a0 messages already deleted' : '';
       return `\u2022 ${a.username} (${a.archive_state.range_label || 'unknown range'})${del}`;
     }).join('\n');
     let msg = `${withExisting.length} account${withExisting.length !== 1 ? 's' : ''} already have an archive record:\n${lines}\n\nProceeding will replace their records with the new date range. Old S3 files are NOT deleted.`;
