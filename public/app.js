@@ -2815,12 +2815,17 @@ els.adminDeleteMessagesBtn.addEventListener('click', async () => {
   for (const accountId of verifiedSelected) {
     const account = state.adminAccounts.find((a) => String(a.id) === accountId);
     const username = account ? account.username : accountId;
+    els.adminArchiveStatus.textContent = `Deleting ${username}\u2026 (${totalDeleted + failed + 1}/${verifiedSelected.length})`;
+
     try {
       const data = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/delete-messages`, {
         method: 'POST',
         body: JSON.stringify({}),
       });
       totalDeleted += data.deleted_count || 0;
+
+      // Refresh the table so the badge updates immediately.
+      await loadAdminDomain(state.selectedDomain.id).catch(function () {});
     } catch (err) {
       setStatus(`Error deleting messages for ${username}: ${err.message}`);
       failed += 1;
