@@ -2636,18 +2636,39 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
     els.adminArchiveStatus.textContent = `Archiving ${username}\u2026 (${succeeded + failed + 1}/${selected.length})`;
 
     try {
-      await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/create`, {
+      const createResp = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/create`, {
         method: 'POST',
         body: JSON.stringify(payload),
       });
-      // Poll until job finishes.
-      let guard = 0;
-      while (guard < 80) {
-        guard += 1;
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const sd = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`);
-        if (!sd.archive || sd.archive.status !== 'running') break;
+
+      if (!createResp.ok) {
+        throw new Error(createResp.error || 'Archive creation returned an error');
       }
+
+      // Poll until the archive job finishes, updating the table so the
+      // status badge reflects the real server state in real time.
+      var pollResult = null;
+      for (var poll = 0; poll < 80; poll++) {
+        // Faster first poll (1s), then 3s intervals.
+        var delay = poll === 0 ? 1000 : 3000;
+        await new Promise(function (resolve) { setTimeout(resolve, delay); });
+
+        var stateResp = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive-state`);
+        pollResult = stateResp.archive;
+
+        // Refresh the admin table so the status badge updates live.
+        await loadAdminDomain(state.selectedDomain.id).catch(function () {});
+
+        if (!pollResult || pollResult.status !== 'running') break;
+      }
+
+      if (!pollResult) {
+        throw new Error('Archive state disappeared during polling');
+      }
+      if (pollResult.status === 'error' || pollResult.error) {
+        throw new Error(pollResult.error || 'Archive job failed');
+      }
+
       succeeded += 1;
     } catch (err) {
       setStatus(`Error archiving ${username}: ${err.message}`);
