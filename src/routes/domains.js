@@ -590,13 +590,13 @@ async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
   return { range, parsed };
 }
 
-async function getLatestArchiveTimestamp() {
+async function listArchiveTimestamps() {
   const { stdout } = await execFileAsync(
     '/usr/bin/aws',
     ['s3', 'ls', 's3://smallgod-mail-archive/archive/'],
     { env: awsEnv, maxBuffer: 1024 * 1024 }
   );
-  console.log(`[getLatestArchiveTimestamp] raw stdout: ${JSON.stringify(stdout)}`);
+  console.log(`[listArchiveTimestamps] raw stdout: ${JSON.stringify(stdout)}`);
 
   const timestamps = stdout
     .split('\n')
@@ -605,7 +605,14 @@ async function getLatestArchiveTimestamp() {
     .map((line) => line.split(/\s+/).pop().replace(/\/$/, ''))
     .filter((entry) => /^\d{8}_\d{6}$/.test(entry));
 
-  return timestamps.length ? timestamps[timestamps.length - 1] : '';
+  // Sort descending (newest first)
+  timestamps.sort(function (a, b) { return b.localeCompare(a); });
+  return timestamps;
+}
+
+async function getLatestArchiveTimestamp() {
+  const timestamps = await listArchiveTimestamps();
+  return timestamps.length ? timestamps[0] : '';
 }
 
 async function withConcurrency(tasks, limit) {
@@ -662,41 +669,47 @@ async function findOrphanedArchives() {
 }
 
 async function findAccountArchivePath(domain, username) {
-  const latestTimestamp = await getLatestArchiveTimestamp();
-  if (!latestTimestamp) {
+  const timestamps = await listArchiveTimestamps();
+  if (!timestamps.length) {
     return null;
   }
 
-  const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain}/${username}/`;
-  let stdout = '';
-  try {
-    const result = await execFileAsync(
-      '/usr/bin/aws',
-      ['s3', 'ls', prefix],
-      { env: awsEnv, maxBuffer: 1024 * 1024 }
-    );
-    stdout = result.stdout || '';
-  } catch (err) {
-    const stderr = String((err && err.stderr) || '').trim();
-    // Some account prefixes return non-zero with no output. Treat as no archive.
-    if (!stderr) {
-      return null;
+  // Check at most the 20 newest archive runs to bound S3 API calls.
+  var checkTimestamps = timestamps.slice(0, 20);
+
+  for (var i = 0; i < checkTimestamps.length; i++) {
+    var ts = checkTimestamps[i];
+    var prefix = 's3://smallgod-mail-archive/archive/' + ts + '/' + domain + '/' + username + '/';
+    var stdout = '';
+    try {
+      var result = await execFileAsync(
+        '/usr/bin/aws',
+        ['s3', 'ls', prefix],
+        { env: awsEnv, maxBuffer: 1024 * 1024 }
+      );
+      stdout = result.stdout || '';
+    } catch (err) {
+      var stderr = String((err && err.stderr) || '').trim();
+      // Some account prefixes return non-zero with no output. Treat as no archive for this timestamp.
+      if (!stderr) {
+        continue;
+      }
+      throw err;
     }
-    throw err;
+
+    var tarball = stdout
+      .split('\n')
+      .map(function (line) { return line.trim(); })
+      .filter(Boolean)
+      .map(function (line) { return line.split(/\s+/).pop(); })
+      .find(function (name) { return name.endsWith('.tar.gz'); });
+
+    if (tarball) {
+      return prefix + tarball;
+    }
   }
 
-  const tarball = stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.split(/\s+/).pop())
-    .find((name) => name.endsWith('.tar.gz'));
-
-  if (!tarball) {
-    return null;
-  }
-
-  return `${prefix}${tarball}`;
+  return null;
 }
 
 async function queueIngest(req, res) {
@@ -881,17 +894,20 @@ router.post('/discover-all', async (req, res) => {
       `SELECT d.id, d.name FROM domains d ORDER BY d.name ASC`
     );
 
-    let latestTimestamp = '';
+    var timestamps = [];
     try {
-      latestTimestamp = await getLatestArchiveTimestamp();
+      timestamps = await listArchiveTimestamps();
     } catch (err) {
-      console.error(`[discover-all] getLatestArchiveTimestamp threw: ${err.message}`);
+      console.error('[discover-all] listArchiveTimestamps threw: ' + err.message);
       return res.status(500).json({ error: 'Could not list S3 archive runs', detail: err.message });
     }
 
-    if (!latestTimestamp) {
+    if (!timestamps.length) {
       return res.json({ ok: true, discovered: 0, total: 0, message: 'No archive runs found in S3' });
     }
+
+    // Check at most the 20 newest archive runs to bound S3 API calls.
+    var checkTimestamps = timestamps.slice(0, 20);
 
     let totalDiscovered = 0;
     const domainResults = [];
@@ -908,23 +924,35 @@ router.post('/discover-all', async (req, res) => {
         if (existing) continue;
 
         const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
-        const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${domain.name}/${usernameLocal}/`;
-        let s3Stdout = '';
-        try {
-          const s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
-          s3Stdout = s3Result.stdout || '';
-        } catch (s3Err) {
-          continue;
+
+        // Iterate timestamps newest first; register the first tarball found.
+        var s3Uri = null;
+        var matchedTimestamp = '';
+        for (var ti = 0; ti < checkTimestamps.length; ti++) {
+          var ts = checkTimestamps[ti];
+          var prefix = 's3://smallgod-mail-archive/archive/' + ts + '/' + domain.name + '/' + usernameLocal + '/';
+          var s3Stdout = '';
+          try {
+            var s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
+            s3Stdout = s3Result.stdout || '';
+          } catch (s3Err) {
+            continue;
+          }
+
+          var tarball = s3Stdout
+            .split('\n')
+            .map(function (line) { return line.trim(); })
+            .filter(Boolean)
+            .map(function (line) { return line.split(/\s+/).pop(); })
+            .find(function (name) { return name.endsWith('.tar.gz'); });
+
+          if (tarball) {
+            s3Uri = prefix + tarball;
+            matchedTimestamp = ts;
+            break;
+          }
         }
 
-        const tarball = s3Stdout
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean)
-          .map((line) => line.split(/\s+/).pop())
-          .find((name) => name.endsWith('.tar.gz'));
-
-        const s3Uri = tarball ? `${prefix}${tarball}` : null;
         if (!s3Uri) continue;
 
         const range = inferRangeFromS3Uri(s3Uri) || {
@@ -936,7 +964,7 @@ router.post('/discover-all', async (req, res) => {
         };
 
         await setArchiveState(account.id, {
-          job_id: `discovered_${latestTimestamp}`,
+          job_id: 'discovered_' + matchedTimestamp,
           status: 'completed',
           verified: true,
           verification_checked_at: new Date().toISOString(),
@@ -2011,20 +2039,23 @@ router.post('/:domainId/archive/discover', async (req, res) => {
       [domainId]
     );
 
-    let latestTimestamp = '';
+    var timestamps = [];
     try {
-      latestTimestamp = await getLatestArchiveTimestamp();
+      timestamps = await listArchiveTimestamps();
     } catch (err) {
-      console.error(`[discover] getLatestArchiveTimestamp threw: ${err.message}`);
+      console.error('[discover] listArchiveTimestamps threw: ' + err.message);
       return res.status(500).json({ error: 'Could not list S3 archive runs', detail: err.message });
     }
-    console.log(`[discover] latestTimestamp="${latestTimestamp}"`);
+    console.log('[discover] timestamps count=' + timestamps.length);
 
-    if (!latestTimestamp) {
+    if (!timestamps.length) {
       return res.json({ ok: true, discovered: 0, message: 'No archive runs found in S3' });
     }
 
-    console.log(`[discover] domainId=${domainId} latestTimestamp=${latestTimestamp} accounts=${accounts.length}`);
+    // Check at most the 20 newest archive runs to bound S3 API calls.
+    var checkTimestamps = timestamps.slice(0, 20);
+
+    console.log('[discover] domainId=' + domainId + ' timestamps=' + checkTimestamps.length + ' accounts=' + accounts.length);
 
     let discovered = 0;
     const results = [];
@@ -2037,29 +2068,39 @@ router.post('/:domainId/archive/discover', async (req, res) => {
       }
 
       const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
-      const prefix = `s3://smallgod-mail-archive/archive/${latestTimestamp}/${account.domain_name}/${usernameLocal}/`;
-      console.log(`[discover] checking ${prefix}`);
-      let s3Stdout = '';
-      try {
-        const s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
-        s3Stdout = s3Result.stdout || '';
-      } catch (s3Err) {
-        const stderr = String((s3Err && s3Err.stderr) || '').trim();
-        if (stderr) {
-          console.error(`[discover] S3 error for ${account.username}:`, stderr);
+
+      // Iterate timestamps newest first; register the first tarball found.
+      var s3Uri = null;
+      var matchedTimestamp = '';
+      for (var ti = 0; ti < checkTimestamps.length; ti++) {
+        var ts = checkTimestamps[ti];
+        var prefix = 's3://smallgod-mail-archive/archive/' + ts + '/' + account.domain_name + '/' + usernameLocal + '/';
+        console.log('[discover] checking ' + prefix);
+        var s3Stdout = '';
+        try {
+          var s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
+          s3Stdout = s3Result.stdout || '';
+        } catch (s3Err) {
+          var stderr = String((s3Err && s3Err.stderr) || '').trim();
+          if (stderr) {
+            console.error('[discover] S3 error for ' + account.username + ': ' + stderr);
+          }
+          continue;
         }
-        results.push({ username: account.username, status: 'not_found' });
-        continue;
+
+        var tarball = s3Stdout
+          .split('\n')
+          .map(function (line) { return line.trim(); })
+          .filter(Boolean)
+          .map(function (line) { return line.split(/\s+/).pop(); })
+          .find(function (name) { return name.endsWith('.tar.gz'); });
+
+        if (tarball) {
+          s3Uri = prefix + tarball;
+          matchedTimestamp = ts;
+          break;
+        }
       }
-
-      const tarball = s3Stdout
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => line.split(/\s+/).pop())
-        .find((name) => name.endsWith('.tar.gz'));
-
-      const s3Uri = tarball ? `${prefix}${tarball}` : null;
 
       if (!s3Uri) {
         results.push({ username: account.username, status: 'not_found' });
@@ -2075,7 +2116,7 @@ router.post('/:domainId/archive/discover', async (req, res) => {
       };
 
       await setArchiveState(account.id, {
-        job_id: `discovered_${latestTimestamp}`,
+        job_id: 'discovered_' + matchedTimestamp,
         status: 'completed',
         verified: true,
         verification_checked_at: new Date().toISOString(),
