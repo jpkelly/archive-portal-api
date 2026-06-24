@@ -2648,6 +2648,7 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
       // Poll until the archive job finishes, updating the table so the
       // status badge reflects the real server state in real time.
       var pollResult = null;
+      var nullStreak = 0;
       for (var poll = 0; poll < 80; poll++) {
         // Faster first poll (1s), then 3s intervals.
         var delay = poll === 0 ? 1000 : 3000;
@@ -2659,7 +2660,16 @@ els.adminArchiveStartBtn.addEventListener('click', async () => {
         // Refresh the admin table so the status badge updates live.
         await loadAdminDomain(state.selectedDomain.id).catch(function () {});
 
-        if (!pollResult || pollResult.status !== 'running') break;
+        if (pollResult && pollResult.status !== 'running') break;
+
+        // Tolerate transient null responses (DB connection blip, etc.)
+        // but fail if we get 3 nulls in a row.
+        if (!pollResult) {
+          nullStreak += 1;
+          if (nullStreak >= 3) break;
+        } else {
+          nullStreak = 0;
+        }
       }
 
       if (!pollResult) {
