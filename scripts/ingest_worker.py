@@ -316,22 +316,26 @@ def build_sql(domain, username, s3_obj, records):
             )
         )
 
-        # Insert attachment metadata (+ optional binary content) for each attachment.
-        for att in r.get('attachments', []):
-            if att['content_hex'] is not None:
-                content_sql = '0x' + att['content_hex']
-            else:
-                content_sql = 'NULL'
-            lines.append(
-                "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
-                "VALUES (%s,%s,%s,%s,%d,%s,'db',NOW()) "
-                "ON DUPLICATE KEY UPDATE filename=VALUES(filename), mime_type=VALUES(mime_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
-                % (
-                    q(att['id']), q(msg_uuid),
-                    q(att['filename']), q(att['mime_type']),
-                    att['size_bytes'], content_sql
+        # Insert attachment metadata only when NOT in metadata-only mode.
+        # In metadata-only mode, attachments are served on-demand from S3
+        # (same as message bodies), so we skip the INSERT to avoid FK
+        # violations when ON DUPLICATE KEY UPDATE fires on messages.
+        if not METADATA_ONLY[0]:
+            for att in r.get('attachments', []):
+                if att['content_hex'] is not None:
+                    content_sql = '0x' + att['content_hex']
+                else:
+                    content_sql = 'NULL'
+                lines.append(
+                    "INSERT INTO attachments (id,message_id,filename,mime_type,size_bytes,content,storage_location,created_at) "
+                    "VALUES (%s,%s,%s,%s,%d,%s,'db',NOW()) "
+                    "ON DUPLICATE KEY UPDATE filename=VALUES(filename), mime_type=VALUES(mime_type), size_bytes=VALUES(size_bytes), content=VALUES(content);"
+                    % (
+                        q(att['id']), q(msg_uuid),
+                        q(att['filename']), q(att['mime_type']),
+                        att['size_bytes'], content_sql
+                    )
                 )
-            )
 
     lines.append("UPDATE folders f SET f.message_count=(SELECT COUNT(*) FROM messages m WHERE m.folder_id=f.id) WHERE f.account_id=@account_id;")
     lines.append(
