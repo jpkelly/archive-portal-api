@@ -2014,11 +2014,13 @@ async function loadAttachments(messageId) {
       info.className = 'attachment-info';
       info.textContent = (att.filename || 'unnamed') + ' (' + formatBytes(att.size_bytes) + ')';
 
-      var link = document.createElement('a');
+      var link = document.createElement('button');
+      link.type = 'button';
       link.className = 'attachment-download button ghost';
       link.textContent = 'Download';
-      link.href = '/messages/attachments/' + att.id + '/download';
-      link.setAttribute('download', att.filename || 'attachment');
+      link.addEventListener('click', function () {
+        downloadAttachment(att.id, att.filename);
+      });
 
       row.appendChild(info);
       row.appendChild(link);
@@ -2026,6 +2028,34 @@ async function loadAttachments(messageId) {
     }
   } catch (err) {
     // Silently ignore — attachments are best-effort.
+  }
+}
+
+async function downloadAttachment(attachmentId, filename) {
+  try {
+    var headers = {};
+    if (state.token) {
+      headers.Authorization = 'Bearer ' + state.token;
+    }
+    var res = await fetch('/messages/attachments/' + attachmentId + '/download', {
+      headers: headers,
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      var errText = await res.text().catch(function () { return 'Download failed'; });
+      throw new Error(errText);
+    }
+    var blob = await res.blob();
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'attachment';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  } catch (err) {
+    alert('Download failed: ' + (err.message || 'Unknown error'));
   }
 }
 
