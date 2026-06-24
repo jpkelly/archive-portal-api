@@ -1535,11 +1535,6 @@ function startUsageRefreshPolling() {
 function startAccountRefreshPolling() {
   if (accountRefreshTimer) return;
   accountRefreshTimer = setInterval(async () => {
-    if (syncingAccounts.size === 0) {
-      stopAccountRefreshPolling();
-      return;
-    }
-
     if (!state.domainId) return;
 
     try {
@@ -1547,10 +1542,14 @@ function startAccountRefreshPolling() {
       if (state.user && state.user.role === 'admin' && state.selectedDomain && state.selectedDomain.id === state.domainId) {
         await loadAdminDomain(state.domainId);
       }
+      // Stop polling if no accounts are indexing (server-side check).
+      if (syncingAccounts.size === 0) {
+        stopAccountRefreshPolling();
+      }
     } catch (_) {
       // Keep polling; transient failures should not stop refreshes.
     }
-  }, 5000);
+  }, 3000);
 }
 
 async function queueReindexAllAccessibleAccounts() {
