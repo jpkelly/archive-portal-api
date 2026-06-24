@@ -123,14 +123,8 @@ router.get('/me', requireAuth, async (req, res) => {
 
 router.post('/logout', requireAuth, async (req, res) => {
   try {
-    const userId = req.auth.sub;
-    const role = req.auth.role;
-
     // Purge all temporary archives on logout.
     await removeDirRecursive(tempArchiveRootDir());
-
-    // Reset mail usage stats so a new login starts from a clean usage view.
-    await resetUsageStatsForUser(userId, role);
 
     return res.json({ ok: true });
   } catch (err) {
