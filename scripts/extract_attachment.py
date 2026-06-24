@@ -136,8 +136,7 @@ def main():
         part, payload = found
         content_type = part.get_content_type() or 'application/octet-stream'
 
-        # 4. Output: first line is CONTENT_TYPE header, then raw binary.
-        sys.stdout.buffer.write(('CONTENT_TYPE:' + content_type + '\n').encode('utf-8'))
+        # 4. Output raw binary content directly to stdout.
         sys.stdout.buffer.write(payload)
         sys.stdout.buffer.flush()
 

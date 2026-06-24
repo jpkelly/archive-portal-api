@@ -253,6 +253,11 @@ router.get('/attachments/:attachmentId/download', async (req, res) => {
     var s3Uri = rawLocation.slice(0, hashIdx);
     var memberPath = rawLocation.slice(hashIdx + 1);
 
+    // Set headers now — we already know the MIME type and filename from the DB.
+    res.set('Content-Type', mimeType);
+    res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(filename) + '"');
+    res.set('Cache-Control', 'private, max-age=3600');
+
     var extractorScript = path.join(__dirname, '..', '..', 'scripts', 'extract_attachment.py');
     var child = spawn('python3', [
       extractorScript,
@@ -264,60 +269,8 @@ router.get('/attachments/:attachmentId/download', async (req, res) => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    var contentTypeSent = false;
-    var stdoutBufs = [];
-
-    child.stdout.on('data', function (chunk) {
-      if (!contentTypeSent) {
-        // First line of stdout is "CONTENT_TYPE:<mime>"
-        var newlineIdx = chunk.indexOf('\n'.charCodeAt(0));
-        if (newlineIdx !== -1) {
-          var headerLine = chunk.slice(0, newlineIdx).toString('utf8');
-          var ctMatch = headerLine.match(/^CONTENT_TYPE:(.+)$/);
-          if (ctMatch) {
-            mimeType = ctMatch[1].trim();
-          }
-          res.set('Content-Type', mimeType);
-          res.set('Content-Disposition', 'attachment; filename="' + encodeURIComponent(filename) + '"');
-          res.set('Cache-Control', 'private, max-age=3600');
-          contentTypeSent = true;
-
-          // Send the remainder of this chunk (after the newline).
-          var rest = chunk.slice(newlineIdx + 1);
-          if (rest.length > 0) {
-            res.write(rest);
-          }
-          // Flush any previously buffered chunks (shouldn't happen, but safe).
-          for (var i = 0; i < stdoutBufs.length; i++) {
-            res.write(stdoutBufs[i]);
-          }
-          stdoutBufs = null;
-        } else {
-          // Newline not yet seen — buffer.
-          stdoutBufs.push(chunk);
-        }
-      } else {
-        res.write(chunk);
-      }
-    });
-
-    child.stdout.on('end', function () {
-      if (!contentTypeSent) {
-        // No output from extractor — likely error.
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Attachment extraction produced no output' });
-        }
-      }
-      res.end();
-    });
-
-    child.on('error', function (err) {
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Extraction process failed', detail: err.message });
-      } else {
-        res.end();
-      }
-    });
+    // Pipe raw stdout directly to the response — no header parsing needed.
+    child.stdout.pipe(res);
 
     var stderr = '';
     child.stderr.on('data', function (chunk) {
@@ -328,6 +281,12 @@ router.get('/attachments/:attachmentId/download', async (req, res) => {
       if (code !== 0 && !res.headersSent) {
         var msg = stderr.trim() || ('Extraction exited with code ' + code);
         res.status(500).json({ error: msg });
+      }
+    });
+
+    child.on('error', function (err) {
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Extraction process failed: ' + err.message });
       }
     });
 
