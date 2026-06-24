@@ -13,6 +13,16 @@
   box-sizing: border-box;
 }
 
+/* Pulsing animation for loading indicators */
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.loading-pulse {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
 body {
   margin: 0;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;

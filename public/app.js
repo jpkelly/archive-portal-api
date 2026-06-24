@@ -2020,10 +2020,10 @@ async function loadMessage(messageId, preview) {
       'Loading body\u2026',
     ];
     els.messageDetail.textContent = headerLines.join('\n');
-    els.messageDetail.classList.add('muted');
+    els.messageDetail.classList.add('muted', 'loading-pulse');
   } else {
     els.messageDetail.textContent = 'Loading message\u2026';
-    els.messageDetail.classList.add('muted');
+    els.messageDetail.classList.add('muted', 'loading-pulse');
   }
 
   // Track request sequence to ignore stale responses.
@@ -2045,7 +2045,7 @@ async function loadMessage(messageId, preview) {
   var m = data.message;
   state.currentMessage = m;
   state.currentMessageId = messageId;
-  els.messageDetail.classList.remove('muted');
+  els.messageDetail.classList.remove('muted', 'loading-pulse');
   els.viewToggle.classList.remove('hidden');
   renderPlainView(m);
   renderEmailView(m);
@@ -2064,7 +2064,7 @@ async function loadAttachments(messageId) {
   if (!msg || !msg.has_attachments) return;
 
   // Show a loading indicator while the S3 tarball is downloaded and parsed.
-  list.innerHTML = '<p class="muted" style="padding:8px">Processing attachments\u2026</p>';
+  list.innerHTML = '<p class="muted loading-pulse" style="padding:8px">Processing attachments\u2026</p>';
   list.classList.remove('hidden');
 
   try {
