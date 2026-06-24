@@ -1620,10 +1620,17 @@ router.get('/:domainId/accounts', async (req, res) => {
     }
 
     const accounts = await query(
-      `SELECT id, username, display_name, message_count, folder_count, last_indexed_at
-       FROM mail_accounts
-       WHERE domain_id = ?
-       ORDER BY username ASC`,
+      `SELECT a.id, a.username, a.display_name, a.message_count, a.folder_count, a.last_indexed_at,
+              COALESCE(b.cached_bytes, 0) AS cached_bytes
+       FROM mail_accounts a
+       LEFT JOIN (
+         SELECT f.account_id, SUM(COALESCE(LENGTH(m.body_text),0) + COALESCE(LENGTH(m.body_html),0) + COALESCE(LENGTH(m.preview_text),0)) AS cached_bytes
+         FROM messages m
+         JOIN folders f ON f.id = m.folder_id
+         GROUP BY f.account_id
+       ) b ON b.account_id = a.id
+       WHERE a.domain_id = ?
+       ORDER BY a.username ASC`,
       [domainId]
     );
 
