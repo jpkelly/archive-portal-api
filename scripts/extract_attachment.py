@@ -88,6 +88,8 @@ def main():
             die(2, 'Empty .eml file')
 
         # 3. Parse the .eml and find the matching attachment.
+        # Walk all parts, match by filename, and use the one with the largest
+        # decoded payload (handles duplicate filenames from inline previews).
         msg = BytesParser(policy=policy.default).parsebytes(raw_email)
         found = None
         found_size = -1
@@ -95,14 +97,12 @@ def main():
         for part in msg.walk():
             cdisp = (part.get_content_disposition() or '').lower()
             part_filename = part.get_filename() or ''
-            # Only real attachments — skip inline previews.
-            if cdisp != 'attachment' or not part_filename:
+            if not (cdisp == 'attachment' or (cdisp == 'inline' and part_filename)):
                 continue
 
             if part_filename != target_filename:
                 continue
 
-            # Prefer the largest payload among duplicates.
             try:
                 payload = part.get_payload(decode=True)
                 if payload is None:
@@ -111,7 +111,7 @@ def main():
                 continue
 
             part_size = len(payload)
-            if part_size >= found_size:
+            if part_size > found_size:
                 found = (part, payload)
                 found_size = part_size
 
