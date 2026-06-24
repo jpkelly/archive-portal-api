@@ -512,7 +512,7 @@ function clearList(listEl, emptyText) {
   listEl.appendChild(li);
 }
 
-function renderButtonList(listEl, rows, labelFn, onClick) {
+function renderButtonList(listEl, rows, labelFn, onClick, idFn, selectedId) {
   listEl.innerHTML = '';
   if (!rows.length) {
     clearList(listEl, 'No items found.');
@@ -524,7 +524,10 @@ function renderButtonList(listEl, rows, labelFn, onClick) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = labelFn(row);
-    btn.addEventListener('click', () => onClick(row));
+    btn.addEventListener('click', function () { onClick(row, btn); });
+    if (idFn && selectedId && idFn(row) === selectedId) {
+      btn.classList.add('selected');
+    }
     li.appendChild(btn);
     listEl.appendChild(li);
   });
@@ -1836,9 +1839,18 @@ async function loadMessages(folderId) {
       var prefix = m.has_attachments ? '\uD83D\uDCCE ' : '';
       return prefix + formatMessageDate(m.sent_at, m.received_at) + ' | ' + (m.subject || '(no subject)') + ' - ' + (m.from_email || 'unknown');
     },
-    async (message) => {
-      await loadMessage(message.id);
-    }
+    function (message, btn) {
+      // Highlight the selected message.
+      var buttons = els.messageList.querySelectorAll('button');
+      for (var i = 0; i < buttons.length; i++) {
+        buttons[i].classList.remove('selected');
+      }
+      if (btn) btn.classList.add('selected');
+      state.currentMessageId = message.id;
+      loadMessage(message.id);
+    },
+    function (m) { return m.id; },
+    state.currentMessageId
   );
   updateMessagePager((data.messages || []).length);
 }
@@ -2636,6 +2648,7 @@ els.logoutBtn.addEventListener('click', async () => {
   state.domainId = null;
   state.accountId = null;
   state.folderId = null;
+  state.currentMessageId = null;
   state.currentMessage = null;
   state.messageOffset = 0;
   state.messageTotal = 0;
