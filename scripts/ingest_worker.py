@@ -409,11 +409,28 @@ def ingest_from_s3(s3_path, domain, username):
         emit_progress('4/5 inserting')
         print('Inserting into database ...')
         with open(sql_path, 'r') as f:
-            result = subprocess.check_output(
+            proc = subprocess.Popen(
                 ['sudo', 'plesk', 'db'],
-                stdin=f, stderr=subprocess.STDOUT
-            ).decode(errors='ignore')
-        for line in result.strip().split('\n'):
+                stdin=f, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            out, err = proc.communicate()
+            out = out.decode(errors='ignore')
+            err = err.decode(errors='ignore')
+        if proc.returncode != 0:
+            # Print the MySQL error so it is visible in logs.
+            for line in err.strip().split('\n'):
+                print('MYSQL ERROR: ' + line)
+            for line in out.strip().split('\n'):
+                print('MYSQL OUT: ' + line)
+            # Also save the failing SQL for inspection.
+            debug_path = '/tmp/ingest_failed.sql'
+            with open(debug_path, 'w') as df:
+                with open(sql_path, 'r') as sf:
+                    df.write(sf.read())
+            print('Saved failing SQL to ' + debug_path)
+            shutil.rmtree(work, ignore_errors=True)
+            sys.exit(1)
+        for line in out.strip().split('\n'):
             print(line)
         emit_progress('5/5 complete (%d msgs, %d att, %d skipped)' % (len(records), total_attachments, skipped))
         return len(records)
