@@ -293,11 +293,13 @@ def build_sql(domain, username, s3_obj, records):
     for r in records:
         mid = r['message_id'] if r['message_id'] is not None else ''
         msg_uuid = str(uuid.uuid4())
-        # When metadata-only, store empty strings instead of NULL for body
-        # columns to avoid MySQL strict-mode issues with the ON DUPLICATE KEY
-        # UPDATE clause referencing NULL values.
-        preview_sql = "''" if METADATA_ONLY[0] else q(r['preview_text'])
-        body_text_sql = "''" if METADATA_ONLY[0] else q(r['body_text'])
+        # In metadata-only mode we still store body_text and preview_text
+        # (they are tiny compared to attachments — typically 1-5 KB each),
+        # so the UI can show message bodies instantly without downloading the
+        # full S3 tarball.  body_html is skipped (redundant, often much larger).
+        # Attachments continue to be served on-demand from S3.
+        preview_sql = q(r['preview_text'])
+        body_text_sql = q(r['body_text'])
         body_html_sql = "''" if METADATA_ONLY[0] else q(r['body_html'])
 
         lines.append(
@@ -403,6 +405,90 @@ def run_repair_counts(domain, username):
     # Parse the final SELECT to confirm counts > 0
     lines_out = [l.strip() for l in out.strip().split('\n') if l.strip()]
     return True, '\n'.join(lines_out)
+
+
+def backfill_bodies(s3_path, domain, username):
+    """Download tarball once, extract body text for every .eml, UPDATE the DB.
+
+    For accounts ingested with --metadata-only that have empty body_text.
+    Downloads the tarball once (instead of once per message like the on-demand
+    extract_body.py path), then updates all matching messages in batches.
+    """
+    work = tempfile.mkdtemp(prefix='backfill_')
+    try:
+        tar_local = os.path.join(work, 'archive.tar.gz')
+        print('Downloading %s ...' % s3_path)
+        subprocess.check_call(
+            [AWS_BIN, 's3', 'cp', s3_path, tar_local],
+            stdout=subprocess.DEVNULL,
+            env=AWS_ENV,
+        )
+
+        print('Extracting bodies ...')
+        updates = []
+        total = 0
+        skipped = 0
+        batch_size = 500
+
+        with tarfile.open(tar_local, 'r:gz') as tf:
+            members = [m for m in tf.getmembers() if m.isfile()
+                       and is_message_member(m.name)
+                       and folder_from_member(m.name)]
+            for idx, m in enumerate(members):
+                if idx > 0 and idx % 100 == 0:
+                    print('  %d/%d messages processed (%d bodies, %d skipped)' %
+                          (idx, len(members), total, skipped))
+
+                name = m.name
+                raw = tf.extractfile(m).read()
+                try:
+                    parsed = parse_msg(raw)
+                except Exception:
+                    skipped += 1
+                    continue
+
+                body = (parsed.get('body_text') or '').strip()
+                preview = (parsed.get('preview_text') or '').strip()
+                if not body and not preview:
+                    skipped += 1
+                    continue
+
+                raw_location = '%s#%s' % (s3_path, name)
+                updates.append((body, preview, raw_location))
+                total += 1
+
+                if len(updates) >= batch_size:
+                    _flush_body_updates(updates)
+                    updates = []
+
+        if updates:
+            _flush_body_updates(updates)
+
+        print('Backfilled %d message bodies (%d skipped)' % (total, skipped))
+        return total
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _flush_body_updates(updates):
+    """Write a batch of UPDATE statements to a temp SQL file and execute."""
+    sql_path = '/tmp/backfill_bodies_batch.sql'
+    lines = []
+    for body, preview, raw_location in updates:
+        lines.append(
+            "UPDATE mail_archive.messages SET body_text=%s, preview_text=%s, updated_at=NOW() "
+            "WHERE raw_location=%s AND (body_text IS NULL OR body_text='') LIMIT 1;" %
+            (q(body), q(preview), q(raw_location))
+        )
+    with open(sql_path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    proc = subprocess.Popen(
+        ['sudo', 'plesk', 'db'],
+        stdin=open(sql_path, 'r'), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    out, err = proc.communicate()
+    if proc.returncode != 0:
+        print('WARNING: batch UPDATE failed: ' + err.decode(errors='ignore').strip()[:500])
 
 
 def ingest_from_s3(s3_path, domain, username):
@@ -534,11 +620,23 @@ if __name__ == '__main__':
         username = local_user if '@' in local_user else ('%s@%s' % (local_user, domain))
         ok, msg = run_repair_counts(domain, username)
         if ok:
-            print('Counts repaired:\\n' + msg)
+            print('Counts repaired:\n' + msg)
             sys.exit(0)
         else:
             print('ERROR: ' + msg)
             sys.exit(1)
+
+    if '--backfill-bodies' in sys.argv:
+        if len(args) < 3:
+            print('Usage: ingest_worker.py --backfill-bodies <domain> <local_username> <s3_path>')
+            sys.exit(1)
+        domain = args[0]
+        local_user = args[1]
+        s3_path = args[2]
+        username = local_user if '@' in local_user else ('%s@%s' % (local_user, domain))
+        count = backfill_bodies(s3_path, domain, username)
+        print('Done: %d message bodies backfilled for %s' % (count, username))
+        sys.exit(0)
 
     if len(args) < 3:
         print('Usage: ingest_worker.py [--extract-attachments|--metadata-only|--fix-counts] <domain> <local_username> [<s3_path>]')
