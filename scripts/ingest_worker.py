@@ -42,6 +42,11 @@ MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 # Wrapped in a list to allow mutation from __main__ without 'global' keyword.
 EXTRACT_ATTACHMENTS = [False]
 
+# Metadata-only mode: skip storing message bodies (body_text, body_html,
+# preview_text) in MySQL. Bodies are fetched on-demand from the S3 tarball
+# when the message is viewed. Pass --metadata-only to enable.
+METADATA_ONLY = [False]
+
 
 def emit_progress(text):
     print('PROGRESS:' + text, flush=True)
@@ -288,6 +293,11 @@ def build_sql(domain, username, s3_obj, records):
     for r in records:
         mid = r['message_id'] if r['message_id'] is not None else ''
         msg_uuid = str(uuid.uuid4())
+        # When metadata-only, skip storing body text/HTML to save MySQL space.
+        preview_sql = 'NULL' if METADATA_ONLY[0] else q(r['preview_text'])
+        body_text_sql = 'NULL' if METADATA_ONLY[0] else q(r['body_text'])
+        body_html_sql = 'NULL' if METADATA_ONLY[0] else q(r['body_html'])
+
         lines.append(
             "INSERT INTO messages (id,folder_id,message_id,message_id_hash,subject,from_name,from_email,to_list,cc_list,bcc_list,sent_at,received_at,has_attachments,size_bytes,preview_text,body_text,body_html,raw_location,mime_hash,created_at,updated_at) "
             "VALUES (%s,@%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%d,%d,%s,%s,%s,%s,%s,NOW(),NOW()) "
@@ -299,7 +309,7 @@ def build_sql(domain, username, s3_obj, records):
                 q(r['to_list']), q(r['cc_list']), q(r['bcc_list']),
                 q(r['sent_at']), q(r['received_at']),
                 int(r['has_attachments']), int(r['size_bytes']),
-                q(r['preview_text']), q(r['body_text']), q(r['body_html']),
+                preview_sql, body_text_sql, body_html_sql,
                 q(r['raw_location']), q(r['mime_hash'])
             )
         )
@@ -413,6 +423,8 @@ if __name__ == '__main__':
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     if '--extract-attachments' in sys.argv:
         EXTRACT_ATTACHMENTS[0] = True
+    if '--metadata-only' in sys.argv:
+        METADATA_ONLY[0] = True
     if len(args) < 3:
         print('Usage: ingest_worker.py [--extract-attachments] <domain> <local_username> <s3_path>')
         sys.exit(1)

@@ -749,6 +749,7 @@ async function queueIngest(req, res) {
       try {
         const child = spawn('python3', [
           '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/ingest_worker.py',
+          '--metadata-only',
           domain,
           username,
           s3Path,
@@ -2154,5 +2155,38 @@ router.post('/:domainId/archive/discover', async (req, res) => {
 
 router.get('/:domainId/accounts/:accountId/ingest', queueIngest);
 router.post('/:domainId/accounts/:accountId/ingest', queueIngest);
+
+// Purge cached message bodies to free MySQL space. Bodies are re-fetched
+// on-demand from S3 when the message is viewed again.
+router.post('/:domainId/purge-bodies', async (req, res) => {
+  var domainId = req.params.domainId;
+  var beforeDate = String(req.body.beforeDate || '').trim();
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(beforeDate)) {
+      return res.status(400).json({ error: 'beforeDate is required (YYYY-MM-DD)' });
+    }
+
+    var result = await query(
+      `UPDATE messages m
+       JOIN folders f ON f.id = m.folder_id
+       JOIN mail_accounts a ON a.id = f.account_id
+       SET m.body_text = NULL, m.body_html = NULL, m.preview_text = NULL
+       WHERE a.domain_id = ? AND COALESCE(m.sent_at, m.received_at) < ?`,
+      [domainId, beforeDate]
+    );
+
+    return res.json({
+      ok: true,
+      domain_id: domainId,
+      before_date: beforeDate,
+      purged: (result && result.affectedRows) || 0,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not purge bodies', detail: err.message });
+  }
+});
 
 module.exports = router;

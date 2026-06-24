@@ -1978,9 +1978,16 @@ function applyViewMode() {
 }
 
 async function loadMessage(messageId) {
-  const data = await api(`/messages/${messageId}`);
+  // Show a loading indicator immediately while the body may be fetched from S3.
+  els.messageDetail.classList.remove('hidden');
+  els.messageDetailEmail.classList.add('hidden');
+  els.messageDetail.textContent = 'Loading message\u2026';
+  els.messageDetail.classList.add('muted');
+
+  const data = await api('/messages/' + messageId);
   const m = data.message;
   state.currentMessage = m;
+  els.messageDetail.classList.remove('muted');
   els.viewToggle.classList.remove('hidden');
   renderPlainView(m);
   renderEmailView(m);

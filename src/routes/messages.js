@@ -63,10 +63,10 @@ router.get('/folders/:folderId/messages', async (req, res) => {
 });
 
 router.get('/:messageId', async (req, res) => {
-  const { messageId } = req.params;
+  var messageId = req.params.messageId;
 
   try {
-    const rows = await query(
+    var rows = await query(
       `SELECT m.id, m.subject, m.from_name, m.from_email, m.to_list, m.cc_list, m.bcc_list,
               m.sent_at, m.received_at, m.has_attachments, m.preview_text, m.body_text, m.body_html, m.raw_location,
               a.id AS account_id, a.username, d.id AS domain_id, d.name AS domain_name
@@ -80,12 +80,72 @@ router.get('/:messageId', async (req, res) => {
       [req.auth.sub, messageId, req.auth.role]
     );
 
-    const message = rows[0];
+    var message = rows[0];
     if (!message) {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    return res.json({ message });
+    // If body is already cached, return immediately.
+    if (message.body_text !== null && message.body_text !== undefined) {
+      return res.json({ message: message });
+    }
+
+    // Slow path: extract body on-demand from the S3 tarball.
+    var rawLocation = message.raw_location;
+    if (!rawLocation || rawLocation.indexOf('#') === -1) {
+      // No S3 reference — return what we have (headers only).
+      return res.json({ message: message });
+    }
+
+    var hashIdx = rawLocation.indexOf('#');
+    var s3Uri = rawLocation.slice(0, hashIdx);
+    var memberPath = rawLocation.slice(hashIdx + 1);
+
+    var extractorScript = path.join(__dirname, '..', '..', 'scripts', 'extract_body.py');
+    var child = spawn('python3', [extractorScript, s3Uri, memberPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    var stdout = '';
+    var stderr = '';
+    child.stdout.on('data', function (chunk) { stdout += chunk.toString('utf8'); });
+    child.stderr.on('data', function (chunk) { stderr += chunk.toString('utf8'); });
+
+    child.on('close', async function (code) {
+      if (code !== 0) {
+        // Extraction failed — return headers only, don't break the UI.
+        console.error('[body extraction] exit ' + code + ': ' + (stderr.trim() || 'no stderr'));
+        return res.json({ message: message });
+      }
+
+      try {
+        var bodyData = JSON.parse(stdout.trim());
+        if (bodyData.body_text !== undefined) {
+          message.body_text = bodyData.body_text;
+          message.body_html = bodyData.body_html || '';
+          message.preview_text = bodyData.preview_text || '';
+        }
+
+        // Cache the extracted body in the DB so subsequent views are instant.
+        try {
+          await query(
+            'UPDATE messages SET body_text = ?, body_html = ?, preview_text = ? WHERE id = ?',
+            [message.body_text || '', message.body_html || '', message.preview_text || '', messageId]
+          );
+        } catch (cacheErr) {
+          // Non-critical: body still works even if cache update fails.
+        }
+
+        return res.json({ message: message });
+      } catch (parseErr) {
+        return res.json({ message: message });
+      }
+    });
+
+    child.on('error', function (err) {
+      return res.json({ message: message });
+    });
+
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch message', detail: err.message });
   }
