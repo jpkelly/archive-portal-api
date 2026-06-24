@@ -85,8 +85,8 @@ router.get('/:messageId', async (req, res) => {
       return res.status(404).json({ error: 'Message not found' });
     }
 
-    // If body is already cached, return immediately.
-    if (message.body_text !== null && message.body_text !== undefined) {
+    // If body is already cached (non-empty), return immediately.
+    if (message.body_text && message.body_text.length > 0) {
       return res.json({ message: message });
     }
 

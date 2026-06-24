@@ -293,10 +293,12 @@ def build_sql(domain, username, s3_obj, records):
     for r in records:
         mid = r['message_id'] if r['message_id'] is not None else ''
         msg_uuid = str(uuid.uuid4())
-        # When metadata-only, skip storing body text/HTML to save MySQL space.
-        preview_sql = 'NULL' if METADATA_ONLY[0] else q(r['preview_text'])
-        body_text_sql = 'NULL' if METADATA_ONLY[0] else q(r['body_text'])
-        body_html_sql = 'NULL' if METADATA_ONLY[0] else q(r['body_html'])
+        # When metadata-only, store empty strings instead of NULL for body
+        # columns to avoid MySQL strict-mode issues with the ON DUPLICATE KEY
+        # UPDATE clause referencing NULL values.
+        preview_sql = "''" if METADATA_ONLY[0] else q(r['preview_text'])
+        body_text_sql = "''" if METADATA_ONLY[0] else q(r['body_text'])
+        body_html_sql = "''" if METADATA_ONLY[0] else q(r['body_html'])
 
         lines.append(
             "INSERT INTO messages (id,folder_id,message_id,message_id_hash,subject,from_name,from_email,to_list,cc_list,bcc_list,sent_at,received_at,has_attachments,size_bytes,preview_text,body_text,body_html,raw_location,mime_hash,created_at,updated_at) "
