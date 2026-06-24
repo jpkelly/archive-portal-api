@@ -1960,7 +1960,7 @@ function renderPlainView(m) {
     `CC: ${parseJsonList(m.cc_list)}`,
     `Sent: ${m.sent_at || ''}`,
     '',
-    m.body_text || m.preview_text || '(no body available)',
+    m.body_text || m.preview_text || '(body not cached — archive needed)',
   ].join('\n');
 }
 
@@ -2050,7 +2050,7 @@ function renderEmailView(m) {
   } else {
     const body = document.createElement('div');
     body.className = 'email-body';
-    body.textContent = bodyText || '(no body available)';
+    body.textContent = bodyText || '(body not cached — archive needed)';
     wrap.appendChild(body);
   }
 }
