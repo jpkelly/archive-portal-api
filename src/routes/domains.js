@@ -1924,7 +1924,7 @@ router.post('/:domainId/accounts/:accountId/archive/verify', async (req, res) =>
       verification_message: verified
         ? (current.archive_s3_uri ? 'Archive found in S3' : 'No matching files in this range')
         : 'Archive object not found in S3',
-      deletion_status: verified ? 'ready' : 'blocked',
+      deletion_status: current.deletion_status === 'completed' ? 'completed' : (verified ? 'ready' : 'blocked'),
       deletion_message: verified
         ? 'Deletion is allowed for this verified range'
         : 'Deletion is blocked until archive verification passes',
