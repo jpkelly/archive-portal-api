@@ -2846,7 +2846,8 @@ els.adminDeleteMessagesBtn.addEventListener('click', async () => {
 
         await loadAdminDomain(domainId).catch(function () {});
 
-        if (pollResult && pollResult.deletion_status !== 'running') break;
+        if (pollResult && pollResult.deletion_status === 'completed') break;
+        if (pollResult && pollResult.deletion_status === 'error') break;
 
         // Show live progress from the delete worker.
         var progressText = (stateResp && stateResp.deleteProgress && stateResp.deleteProgress.text) || (pollResult && pollResult.deletion_message) || '';
@@ -2858,8 +2859,8 @@ els.adminDeleteMessagesBtn.addEventListener('click', async () => {
       if (!pollResult) {
         throw new Error('Deletion did not complete within the polling window — check server logs');
       }
-      if (pollResult.deletion_status === 'error') {
-        throw new Error(pollResult.deletion_message || pollResult.error || 'Deletion failed');
+      if (pollResult.deletion_status !== 'completed') {
+        throw new Error(pollResult.deletion_message || pollResult.error || 'Deletion did not complete successfully');
       }
 
       succeeded += 1;
