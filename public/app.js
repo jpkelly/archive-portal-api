@@ -138,6 +138,8 @@ const state = {
   usageRowBulkBaseline: new Map(),
   usageBulkScanCutoff: '',
   usageSelectedDomainOnly: getStoredBoolean(UI_PREF_KEYS.usageSelectedDomainOnly, false),
+  usageSortColumn: 'reclaimable_bytes',
+  usageSortAsc: false,
   usageAutoHeal: getStoredAutoHeal(),
 };
 function defaultUsageBeforeDate() {
@@ -1078,6 +1080,44 @@ async function waitForUsageRowRefresh(row, beforeDate) {
   return { state: 'timeout' };
 }
 
+function sortUsageRows(rows, column, asc) {
+  var sorted = rows.slice();
+  var numCols = {
+    total_files: 'total_files',
+    total_bytes: 'total_bytes',
+    reclaimable_bytes: 'reclaimable_bytes',
+    bucket_gt3y_bytes: 'bucket_gt3y_bytes',
+    bucket_1y_to_3y_bytes: 'bucket_1y_to_3y_bytes',
+    bucket_lt1y_bytes: 'bucket_lt1y_bytes',
+  };
+  var isNum = numCols.hasOwnProperty(column);
+  var colKey = numCols[column] || column;
+
+  sorted.sort(function (a, b) {
+    var va, vb;
+    if (isNum) {
+      va = Number(a[colKey]) || 0;
+      vb = Number(b[colKey]) || 0;
+    } else if (column === 'username') {
+      va = String(a.username || '').toLowerCase();
+      vb = String(b.username || '').toLowerCase();
+    } else if (column === 'domain_name') {
+      va = String(a.domain_name || '').toLowerCase();
+      vb = String(b.domain_name || '').toLowerCase();
+    } else if (column === 'scanned_at') {
+      va = a.scanned_at ? new Date(a.scanned_at).getTime() : 0;
+      vb = b.scanned_at ? new Date(b.scanned_at).getTime() : 0;
+    } else {
+      return 0;
+    }
+    if (va < vb) return asc ? -1 : 1;
+    if (va > vb) return asc ? 1 : -1;
+    return 0;
+  });
+
+  return sorted;
+}
+
 function renderUsageTable(rows) {
   if (!els.adminUsageTable) return;
   const list = rows || [];
@@ -1105,8 +1145,72 @@ function renderUsageTable(rows) {
     return;
   }
 
-  const topRows = visibleList.slice(0, 200);
-  const selectedCutoff = normalizeDateOnlyText(
+  // Sort before slicing
+  var sortedList = sortUsageRows(visibleList, state.usageSortColumn, state.usageSortAsc);
+  var topRows = sortedList.slice(0, 200);
+
+  // Build sortable header row
+  var headerRow = document.createElement('div');
+  headerRow.className = 'usage-row usage-header';
+  var sortCol = state.usageSortColumn;
+  var sortAsc = state.usageSortAsc;
+
+  function makeHeader(label, column) {
+    var h = document.createElement('span');
+    h.textContent = label;
+    h.className = 'usage-header-cell';
+    if (column === sortCol) {
+      h.classList.add('usage-sorted');
+      h.textContent += sortAsc ? ' ▲' : ' ▼';
+    }
+    h.addEventListener('click', function () {
+      if (state.usageSortColumn === column) {
+        state.usageSortAsc = !state.usageSortAsc;
+      } else {
+        state.usageSortColumn = column;
+        state.usageSortAsc = false; // default desc for numeric, asc for text
+        if (column === 'username' || column === 'domain_name') {
+          state.usageSortAsc = true;
+        }
+      }
+      renderUsageTable(state.usageRows);
+    });
+    return h;
+  }
+
+  // Rank column (not sortable)
+  var rankH = document.createElement('span');
+  rankH.className = 'usage-rank';
+  rankH.textContent = '#';
+  headerRow.appendChild(rankH);
+
+  // Identity columns
+  var idH = document.createElement('div');
+  idH.className = 'usage-identity';
+  idH.appendChild(makeHeader('Account', 'username'));
+  idH.appendChild(document.createTextNode(' @ '));
+  idH.appendChild(makeHeader('Domain', 'domain_name'));
+  headerRow.appendChild(idH);
+
+  // Totals columns
+  var totalsH = document.createElement('div');
+  totalsH.className = 'usage-totals usage-header-totals';
+  totalsH.appendChild(makeHeader('3y+', 'bucket_gt3y_bytes'));
+  totalsH.appendChild(makeHeader('1-3y', 'bucket_1y_to_3y_bytes'));
+  totalsH.appendChild(makeHeader('<1y', 'bucket_lt1y_bytes'));
+  totalsH.appendChild(makeHeader('Total', 'total_bytes'));
+  totalsH.appendChild(makeHeader('Reclaim', 'reclaimable_bytes'));
+  headerRow.appendChild(totalsH);
+
+  // Action column placeholder
+  var actionH = document.createElement('span');
+  actionH.className = 'usage-header-action';
+  actionH.textContent = '';
+  headerRow.appendChild(actionH);
+
+  els.adminUsageTable.appendChild(headerRow);
+
+  var selectedCutoff = normalizeDateOnlyText(
     (els.adminUsageBeforeDate && els.adminUsageBeforeDate.value) || state.usageBeforeDate
   );
   const selectedDomainId = state.selectedDomain ? String(state.selectedDomain.id) : '';

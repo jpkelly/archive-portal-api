@@ -457,6 +457,46 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
+.usage-header {
+  position: sticky;
+  top: 0;
+  background: #f5f6f8;
+  border-bottom: 2px solid var(--border);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  z-index: 2;
+  padding: 6px 10px;
+}
+
+.usage-header-cell {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.usage-header-cell:hover {
+  background: #e2e5ea;
+}
+
+.usage-header-cell.usage-sorted {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.usage-header-totals {
+  grid-template-columns: repeat(5, auto);
+}
+
+.usage-header-action {
+  /* placeholder to balance the button column */
+}
+
 .usage-row:last-child {
   border-bottom: none;
 }
