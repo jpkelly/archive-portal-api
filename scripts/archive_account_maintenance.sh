@@ -92,10 +92,9 @@ if [[ "$cmd" == "archive" ]]; then
     rm -rf "$work"
     exit 5
   fi
-  if ! sudo chown "$(id -u)":"$(id -g)" "$archive_path"; then
-    echo "ERROR=Failed to set archive file ownership"
-    rm -rf "$work"
-    exit 5
+  if ! sudo chown "$(id -u)":"$(id -g)" "$archive_path" 2>/dev/null; then
+    # Non-fatal: archive file remains root-owned but world-readable.
+    :
   fi
   if ! gzip -t "$archive_path"; then
     echo "ERROR=Archive integrity check failed"
