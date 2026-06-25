@@ -834,6 +834,9 @@ function renderArchiveAccountTable(accounts) {
     if (archive && (archive.deletion_status === 'deleted' || archive.deletion_status === 'completed')) {
       delBadge.textContent = 'Msgs Deleted';
       delBadge.dataset.state = 'deleted';
+    } else if (archive && archive.deletion_status === 'running') {
+      delBadge.textContent = 'Deleting\u2026';
+      delBadge.dataset.state = 'del-running';
     } else if (archive && archive.deletion_status === 'ready') {
       delBadge.textContent = 'Del Ready';
       delBadge.dataset.state = 'del-ready';
@@ -2809,32 +2812,69 @@ els.adminDeleteMessagesBtn.addEventListener('click', async () => {
   if (!ok) return;
 
   els.adminDeleteMessagesBtn.disabled = true;
-  let totalDeleted = 0;
+  const domainId = state.selectedDomain.id;
+  let succeeded = 0;
   let failed = 0;
 
   for (const accountId of verifiedSelected) {
     const account = state.adminAccounts.find((a) => String(a.id) === accountId);
     const username = account ? account.username : accountId;
-    els.adminArchiveStatus.textContent = `Deleting ${username}\u2026 (${totalDeleted + failed + 1}/${verifiedSelected.length})`;
+    els.adminArchiveStatus.textContent = `Deleting ${username}\u2026 (${succeeded + failed + 1}/${verifiedSelected.length})`;
 
     try {
-      const data = await api(`/domains/${state.selectedDomain.id}/accounts/${accountId}/archive/delete-messages`, {
+      const deleteResp = await api(`/domains/${domainId}/accounts/${accountId}/archive/delete-messages`, {
         method: 'POST',
         body: JSON.stringify({}),
       });
-      totalDeleted += data.deleted_count || 0;
 
-      // Refresh the table so the badge updates immediately.
-      await loadAdminDomain(state.selectedDomain.id).catch(function () {});
+      if (!deleteResp.ok) {
+        throw new Error(deleteResp.error || 'Delete request returned an error');
+      }
+
+      // Poll until deletion finishes, showing live progress.
+      var pollResult = null;
+      for (var poll = 0; poll < 300; poll++) {
+        var delay = poll === 0 ? 1000 : 3000;
+        await new Promise(function (resolve) { setTimeout(resolve, delay); });
+
+        try {
+          var stateResp = await api(`/domains/${domainId}/accounts/${accountId}/archive-state`);
+          pollResult = stateResp.archive;
+        } catch (_) {
+          // API call itself failed — keep polling.
+        }
+
+        await loadAdminDomain(domainId).catch(function () {});
+
+        if (pollResult && pollResult.deletion_status !== 'running') break;
+
+        // Show live progress from the delete worker.
+        var progressText = (stateResp && stateResp.deleteProgress && stateResp.deleteProgress.text) || (pollResult && pollResult.deletion_message) || '';
+        if (progressText) {
+          els.adminArchiveStatus.textContent = `${username}: ${progressText}`;
+        }
+      }
+
+      if (!pollResult) {
+        throw new Error('Deletion did not complete within the polling window — check server logs');
+      }
+      if (pollResult.deletion_status === 'error') {
+        throw new Error(pollResult.deletion_message || pollResult.error || 'Deletion failed');
+      }
+
+      succeeded += 1;
     } catch (err) {
       setStatus(`Error deleting messages for ${username}: ${err.message}`);
       failed += 1;
     }
   }
 
-  setStatus(`Deleted ${totalDeleted} server-side messages across ${verifiedSelected.length - failed} account(s).`, 'info');
-  await loadAdminDomain(state.selectedDomain.id);
-  await loadAccounts(state.selectedDomain.id);
+  const parts = [];
+  if (succeeded) parts.push(`${succeeded} succeeded`);
+  if (failed) parts.push(`${failed} failed`);
+  setStatus(`Delete complete: ${parts.join(' · ')}.`, 'info');
+  await loadAdminDomain(domainId);
+  await loadAccounts(domainId);
   els.adminDeleteMessagesBtn.disabled = false;
 });
 

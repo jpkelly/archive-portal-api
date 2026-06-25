@@ -727,6 +727,7 @@ input {
 .archive-status-badge[data-state="error"]      { background: #f8d7da; color: #721c24; }
 .archive-status-badge[data-state="deleted"]    { background: #6c757d; color: #fff; }
 .archive-status-badge[data-state="del-ready"]  { background: #d1ecf1; color: #0c5460; }
+.archive-status-badge[data-state="del-running"] { background: #fff3cd; color: #856404; }
 
 .archive-actions-row {
   display: flex;

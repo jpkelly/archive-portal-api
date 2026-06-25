@@ -17,6 +17,7 @@ const awsEnv = {
 };
 const ingestProgressByAccount = new Map();
 const usageScanProgressByDomain = new Map();
+const deleteProgressByAccount = new Map();
 
 function setIngestProgress(accountId, text) {
   ingestProgressByAccount.set(accountId, { text, updatedAt: Date.now() });
@@ -34,6 +35,24 @@ function getIngestProgress(accountId) {
   // Drop stale progress after 30 minutes to avoid permanent stuck badges.
   if ((Date.now() - progress.updatedAt) > (30 * 60 * 1000)) {
     ingestProgressByAccount.delete(accountId);
+    return null;
+  }
+  return progress;
+}
+
+function setDeleteProgress(accountId, text) {
+  deleteProgressByAccount.set(accountId, { text, updatedAt: Date.now() });
+}
+
+function clearDeleteProgress(accountId) {
+  deleteProgressByAccount.delete(accountId);
+}
+
+function getDeleteProgress(accountId) {
+  const progress = deleteProgressByAccount.get(accountId);
+  if (!progress) return null;
+  if ((Date.now() - progress.updatedAt) > (30 * 60 * 1000)) {
+    deleteProgressByAccount.delete(accountId);
     return null;
   }
   return progress;
@@ -1730,7 +1749,8 @@ router.get('/:domainId/accounts/:accountId/archive-state', async (req, res) => {
     }
 
     const state = await getArchiveState(accountId);
-    return res.json({ account_id: accountId, archive: state });
+    const deleteProgress = getDeleteProgress(accountId);
+    return res.json({ account_id: accountId, archive: state, deleteProgress: deleteProgress || undefined });
   } catch (err) {
     return res.status(500).json({ error: 'Could not fetch archive state', detail: err.message });
   }
@@ -1955,7 +1975,6 @@ router.post('/:domainId/accounts/:accountId/archive/verify', async (req, res) =>
 
 router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req, res) => {
   const { domainId, accountId } = req.params;
-  let tempDir;
 
   try {
     if (!requireAdmin(req, res)) return;
@@ -1975,6 +1994,9 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
     if (current.status === 'running') {
       return res.status(400).json({ error: 'Archive job is still running.' });
     }
+    if (current.deletion_status === 'running') {
+      return res.status(400).json({ error: 'Deletion is already in progress.' });
+    }
 
     if (!current.archive_s3_uri || current.archive_file_count === 0 || current.status === 'completed_no_files') {
       const next = {
@@ -1985,74 +2007,125 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
         deleted_at: new Date().toISOString(),
       };
       await setArchiveState(accountId, next);
-
-      return res.json({
-        ok: true,
-        account_id: accountId,
-        deleted_count: 0,
-        archive: next,
-      });
+      return res.json({ ok: true, account_id: accountId, deleted_count: 0, archive: next });
     }
 
+    // Mark as running immediately so the UI shows feedback.
+    await setArchiveState(accountId, { ...current, deletion_status: 'running', deletion_message: 'Deletion in progress\u2026' });
+
+    // Run the actual delete asynchronously so the HTTP request returns immediately.
     const manifestS3Uri = deriveManifestS3Uri(current.archive_s3_uri);
     if (!manifestS3Uri) {
+      await setArchiveState(accountId, { ...current, deletion_status: 'error', deletion_message: 'Could not determine manifest S3 URI' });
       return res.status(500).json({ error: 'Could not determine manifest path for archive delete' });
     }
 
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'archive-delete-'));
-    const manifestPath = path.join(tempDir, path.basename(manifestS3Uri));
-    await execFileAsync(
-      '/usr/bin/aws',
-      ['s3', 'cp', manifestS3Uri, manifestPath, '--only-show-errors'],
-      { env: awsEnv, maxBuffer: 1024 * 1024 }
-    );
-
     const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
-    let stdout;
-    try {
-      ({ stdout } = await execFileAsync(
-        'bash',
-        [
+    const fromDate = current.fromDate;
+    const toDate = current.toDate;
+    const mode = current.mode;
+
+    setImmediate(async () => {
+      let tempDir;
+      try {
+        tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'archive-delete-'));
+        const manifestPath = path.join(tempDir, path.basename(manifestS3Uri));
+        await execFileAsync(
+          '/usr/bin/aws',
+          ['s3', 'cp', manifestS3Uri, manifestPath, '--only-show-errors'],
+          { env: awsEnv, maxBuffer: 1024 * 1024 }
+        );
+
+        // Use spawn for real-time progress capture.
+        const child = spawn('bash', [
           '/var/www/vhosts/smallgod.net/archive.smallgod.net/scripts/archive_account_maintenance.sh',
           'delete',
           account.domain_name,
           usernameLocal,
-          current.fromDate,
-          current.toDate,
-          current.mode,
+          fromDate,
+          toDate,
+          mode,
           manifestPath,
-        ],
-        { env: awsEnv, maxBuffer: 1024 * 1024 }
-      ));
-    } catch (err) {
-      const parsed = parseKeyValueStdout(err.stdout || '');
-      throw new Error(parsed.ERROR || err.stderr || err.message);
-    }
+        ], { env: { ...awsEnv, PATH: process.env.PATH }, stdio: ['ignore', 'pipe', 'pipe'] });
 
-    const parsed = parseKeyValueStdout(stdout);
-    const deletedCount = Number(parsed.DELETED_COUNT || 0);
+        let stdout = '';
+        let stderr = '';
+        let lastProgressUpdate = 0;
 
-    const next = {
-      ...current,
-      deletion_status: 'completed',
-      deletion_message: `Deleted ${deletedCount} files from server maildir for verified range ${current.range_label}`,
-      delete_count: deletedCount,
-      deleted_at: new Date().toISOString(),
-    };
-    await setArchiveState(accountId, next);
+        child.stdout.on('data', (chunk) => {
+          const text = chunk.toString();
+          stdout += text;
+          const lines = text.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('PROGRESS:')) {
+              const now = Date.now();
+              // Throttle DB writes to once per 2 seconds.
+              if (now - lastProgressUpdate > 2000) {
+                lastProgressUpdate = now;
+                const msg = line.substring('PROGRESS:'.length).trim();
+                setDeleteProgress(accountId, msg);
+                setArchiveState(accountId, {
+                  ...current,
+                  deletion_status: 'running',
+                  deletion_message: msg,
+                }).catch(() => {});
+              }
+            }
+          }
+        });
+
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk.toString();
+        });
+
+        await new Promise((resolve, reject) => {
+          child.on('close', (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              const err = new Error(stderr.trim() || `Delete script exited with code ${code}`);
+              err.stdout = stdout;
+              err.stderr = stderr;
+              reject(err);
+            }
+          });
+          child.on('error', reject);
+        });
+
+        const parsed = parseKeyValueStdout(stdout);
+        const deletedCount = Number(parsed.DELETED_COUNT || 0);
+
+        clearDeleteProgress(accountId);
+        await setArchiveState(accountId, {
+          ...current,
+          deletion_status: 'completed',
+          deletion_message: `Deleted ${deletedCount} files from server maildir for verified range ${current.range_label}`,
+          delete_count: deletedCount,
+          deleted_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        clearDeleteProgress(accountId);
+        const parsed = parseKeyValueStdout((err && err.stdout) || '');
+        await setArchiveState(accountId, {
+          ...current,
+          deletion_status: 'error',
+          deletion_message: parsed.ERROR || err.message || 'Deletion failed',
+          error: parsed.ERROR || err.message,
+        }).catch(() => {});
+      } finally {
+        if (tempDir) {
+          await fs.rmdir(tempDir, { recursive: true }).catch(() => {});
+        }
+      }
+    });
 
     return res.json({
       ok: true,
       account_id: accountId,
-      deleted_count: deletedCount,
-      archive: next,
+      message: `Deletion queued for ${account.username}`,
     });
   } catch (err) {
-    return res.status(500).json({ error: 'Could not delete messages', detail: err.message });
-  } finally {
-    if (tempDir) {
-      await fs.promises.rmdir(tempDir, { recursive: true }).catch(() => {});
-    }
+    return res.status(500).json({ error: 'Could not queue deletion', detail: err.message });
   }
 });
 

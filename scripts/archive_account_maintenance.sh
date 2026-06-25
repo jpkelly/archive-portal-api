@@ -278,10 +278,18 @@ if [[ "$cmd" == "delete" ]]; then
     exit 0
   fi
 
+  echo "PROGRESS: starting deletion of $manifest_count files"
+
   deleted_count="0"
+  progress_interval=500
+  next_milestone=$progress_interval
   while IFS= read -r target; do
     if [[ -n "$target" ]]; then
       sudo rm -f -- "$target" && deleted_count=$((deleted_count + 1))
+      if [[ "$deleted_count" -ge "$next_milestone" ]]; then
+        echo "PROGRESS: deleted $deleted_count / $manifest_count files"
+        next_milestone=$((deleted_count + progress_interval))
+      fi
     fi
   done < "$paths"
 
