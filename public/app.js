@@ -1452,6 +1452,7 @@ async function loadGlobalUsage(scan = false, options = {}) {
       if (staleForTarget.length === 0) {
         state.usageAutoHeal = { ...INACTIVE_AUTOHEAL };
         setStoredAutoHeal(state.usageAutoHeal);
+        stopUsageRefreshPolling();
       } else {
         const prevStale = typeof heal.lastStale === 'number' ? heal.lastStale : Infinity;
         const madeProgress = staleForTarget.length < prevStale;
@@ -1459,18 +1460,13 @@ async function loadGlobalUsage(scan = false, options = {}) {
         heal.lastStale = staleForTarget.length;
         setStoredAutoHeal(heal);
         if (heal.stalls > MAX_AUTOHEAL_STALLS) {
-          // No progress across several passes; stop retrying to avoid a tight loop.
           state.usageAutoHeal = { ...INACTIVE_AUTOHEAL };
           setStoredAutoHeal(state.usageAutoHeal);
+          stopUsageRefreshPolling();
         } else {
-          const healAt = new Date().toLocaleTimeString();
-          setAdminUsageStatus(formatGlobalScanProgress(beforeDate, healAt));
-          try {
-            await loadGlobalUsage(true, { background: true });
-          } catch (_) {
-            // Keep polling; a transient failure should not abort the heal cycle.
-          }
-          return;
+          // Keep the polling timer running so convergence continues in the
+          // background. Do NOT await here — that freezes the UI button state.
+          startUsageRefreshPolling();
         }
       }
     }
@@ -1719,7 +1715,9 @@ function startUsageRefreshPolling() {
       return;
     }
     try {
-      await loadGlobalUsage(false, { background: true });
+      const heal = state.usageAutoHeal;
+      const shouldScan = Boolean(heal && heal.active && heal.stalls <= 3);
+      await loadGlobalUsage(shouldScan, { background: true });
     } catch (_) {
       // Keep polling; transient failures should not stop refreshes.
     }
