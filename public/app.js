@@ -253,8 +253,10 @@ async function loadStorageOverview() {
     const data = await api('/domains/storage/overview');
     renderStorageOverview(data);
   } catch (err) {
-    // Non-fatal — hide the bar rather than block the portal.
-    els.storageOverview.classList.add('hidden');
+    // Non-fatal — show an inline error rather than hiding the bar silently,
+    // so a failed fetch is visible instead of looking like a dead button.
+    els.storageOverview.classList.remove('hidden');
+    els.storageSummaryText.innerHTML = '<span style="display:block;color:#a33">Could not load storage stats — click refresh to retry.</span>';
   }
 }
 
@@ -3279,8 +3281,20 @@ els.messageNextBtn.addEventListener('click', async () => {
 });
 
 if (els.storageRefreshBtn) {
-  els.storageRefreshBtn.addEventListener('click', () => {
-    loadStorageOverview();
+  els.storageRefreshBtn.addEventListener('click', async () => {
+    const btn = els.storageRefreshBtn;
+    const original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '&#8987;'; // hourglass while fetching
+    try {
+      await loadStorageOverview();
+      setStatus('Info: Storage stats refreshed.', 'info');
+    } catch (_) {
+      setStatus('Error: Could not refresh storage stats.');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = original;
+    }
   });
 }
 
