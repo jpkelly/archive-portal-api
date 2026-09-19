@@ -15,29 +15,23 @@ function tempArchiveRootDir() {
 }
 
 async function resetUsageStatsForUser(userId, role) {
-  // Admins see all domains — resetting global counts would destroy indexed
-  // message counts that took hours to ingest.  Only reset usage snapshots
-  // (transient disk-usage reports), never the canonical mail_accounts counts.
+  // Reset ONLY transient disk-usage scan snapshots (mail_usage rows) — the
+  // cached results of the admin panel's "Scan Domain" mailbox size reports.
+  //
+  // NEVER touch the canonical index state (mail_accounts.message_count,
+  // folders.message_count, last_indexed_at). Those represent completed ingest
+  // work and are what marks an account "indexed". Zeroing them on login made
+  // every login treat all accounts as unindexed, re-downloading and
+  // re-parsing every S3 tarball on each session (the "login re-index storm").
   if (role === 'admin') {
     await query('DELETE FROM mail_usage WHERE 1=1');
     return;
   }
 
   await query(
-    `UPDATE folders f
-     JOIN mail_accounts a ON a.id = f.account_id
-     JOIN domain_members dm ON dm.domain_id = a.domain_id
-     SET f.message_count = 0, f.updated_at = NOW()
-     WHERE dm.user_id = ?`,
-    [userId]
-  );
-  await query(
-    `UPDATE mail_accounts a
-     JOIN domain_members dm ON dm.domain_id = a.domain_id
-     SET a.message_count = 0,
-         a.folder_count = 0,
-         a.last_indexed_at = NULL,
-         a.updated_at = NOW()
+    `DELETE mu FROM mail_usage mu
+     JOIN domains d ON d.id = mu.domain_id
+     JOIN domain_members dm ON dm.domain_id = d.id
      WHERE dm.user_id = ?`,
     [userId]
   );

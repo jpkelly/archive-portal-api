@@ -1950,7 +1950,14 @@ function startAccountRefreshPolling() {
 async function queueReindexAllAccessibleAccounts() {
   if (!state.token || !state.domains.length) return;
 
-  await api('/auth/reset-usage', { method: 'GET' });
+  // NOTE: do NOT call /auth/reset-usage here. That endpoint used to zero the
+  // canonical index counters (mail_accounts.message_count / last_indexed_at),
+  // which made every login re-queue every account for a full re-ingest —
+  // re-downloading and re-parsing each S3 tarball on every session. The
+  // backend now only clears transient usage-scan snapshots, but even that
+  // should not happen implicitly on login (it would wipe the admin's cached
+  // disk-usage scans). Index state is preserved; the loop below only queues
+  // accounts that are genuinely unindexed.
 
   if (state.domainId) {
     try {
@@ -2661,7 +2668,7 @@ els.loginForm.addEventListener('submit', async (event) => {
       resetMessageView('Select a folder first.');
     }
     els.password.value = '';
-    setStatus('Info: Logged in. Re-indexing is running in the background and counts will populate as processing completes.', 'info');
+    setStatus('Info: Logged in.', 'info');
     loadStorageOverview().catch(() => {});
     setTimeout(() => {
       queueReindexAllAccessibleAccounts().catch((err) => {
