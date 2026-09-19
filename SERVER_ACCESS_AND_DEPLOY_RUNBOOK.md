@@ -5,12 +5,11 @@ Purpose: quick resume guide for accessing and updating archive.smallgod.net with
 ## 1. Server access methods
 
 ### 1.1 SSH access (primary)
-Host: aws1.smallgod.net
-Port: 5551
-User: centos
+Host: aws2.smallgod.net
+User: ubuntu
 
 Command:
-  ssh -p 5551 centos@aws1.smallgod.net
+  ssh ubuntu@aws2.smallgod.net
 
 ### 1.2 Plesk CLI access (from SSH shell)
 Most deploy/runtime operations are done through sudo + Plesk CLI.
@@ -19,17 +18,17 @@ Examples:
   sudo plesk ext git --info -domain archive.smallgod.net -name archive-portal-api
   sudo plesk ext git --get-last-commit -domain archive.smallgod.net -name archive-portal-api
 
-### 1.3 Runtime process manager access (PM2 under Plesk Node 12)
+### 1.3 Runtime process manager access (PM2 under Plesk Node 22)
 Important: PM2 must be invoked with Plesk Node and --jitless.
 
 Node binary:
-  /opt/plesk/node/12/bin/node
+  /opt/plesk/node/22/bin/node
 
 PM2 CLI:
-  /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2
+  /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2
 
 Working PM2 command pattern:
-  sudo /opt/plesk/node/12/bin/node --jitless /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2 list
+  sudo /opt/plesk/node/22/bin/node --jitless /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2 list
 
 ### 1.4 Deployed app path
   /var/www/vhosts/smallgod.net/archive.smallgod.net
@@ -47,12 +46,12 @@ From local repo:
   git push origin main
 
 ### 2.2 Verify webhook-driven deploy completed
-  ssh -p 5551 centos@aws1.smallgod.net 'sudo plesk ext git --get-last-commit -domain archive.smallgod.net -name archive-portal-api 2>&1 | head -3'
+  ssh ubuntu@aws2.smallgod.net 'sudo plesk ext git --get-last-commit -domain archive.smallgod.net -name archive-portal-api 2>&1 | head -3'
 
 Expected: latest pushed commit SHA appears.
 
 ### 2.3 Verify repo integration settings
-  ssh -p 5551 centos@aws1.smallgod.net 'sudo plesk ext git --info -domain archive.smallgod.net -name archive-portal-api 2>&1'
+  ssh ubuntu@aws2.smallgod.net 'sudo plesk ext git --info -domain archive.smallgod.net -name archive-portal-api 2>&1'
 
 Important fields to confirm:
 - Deployment mode: auto
@@ -62,31 +61,31 @@ Important fields to confirm:
 ## 3. Runtime restart methods
 
 ### 3.1 Restart app (safe standard)
-  ssh -p 5551 centos@aws1.smallgod.net '\
-    sudo /opt/plesk/node/12/bin/node --jitless \
-    /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2 restart archive-portal-api\
+  ssh ubuntu@aws2.smallgod.net '\
+    sudo /opt/plesk/node/22/bin/node --jitless \
+    /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2 restart archive-portal-api\
   '
 
 ### 3.2 Check app status
-  ssh -p 5551 centos@aws1.smallgod.net '\
-    sudo /opt/plesk/node/12/bin/node --jitless \
-    /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2 list\
+  ssh ubuntu@aws2.smallgod.net '\
+    sudo /opt/plesk/node/22/bin/node --jitless \
+    /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2 list\
   '
 
 ### 3.3 Check recent logs
-  ssh -p 5551 centos@aws1.smallgod.net '\
-    sudo /opt/plesk/node/12/bin/node --jitless \
-    /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2 logs archive-portal-api --lines 80 --nostream\
+  ssh ubuntu@aws2.smallgod.net '\
+    sudo /opt/plesk/node/22/bin/node --jitless \
+    /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2 logs archive-portal-api --lines 80 --nostream\
   '
 
 ## 4. Post-deploy action (must stay configured)
 
 Set or refresh action:
-  ssh -p 5551 centos@aws1.smallgod.net '\
+  ssh ubuntu@aws2.smallgod.net '\
     sudo plesk ext git --update \
       -domain archive.smallgod.net \
       -name archive-portal-api \
-      -actions "/opt/plesk/node/12/bin/node --jitless /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2 restart archive-portal-api"\
+      -actions "/opt/plesk/node/22/bin/node --jitless /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2 restart archive-portal-api"\
   '
 
 ## 5. Backup update methods (when auto flow is blocked)
@@ -123,16 +122,16 @@ Restart PM2 and re-test.
 3) Archive ingest depends on S3 object presence per account.
 If response says no archives found, verify object exists for that exact account path in S3.
 
-4) AWS credentials currently exist under centos home (~/.aws).
+4) AWS credentials currently exist under ubuntu home (~/.aws).
 If runtime context changes, credential visibility can change.
 
 ## 8. Fast resume commands
 
 Check everything quickly:
-  ssh -p 5551 centos@aws1.smallgod.net '\
+  ssh ubuntu@aws2.smallgod.net '\
     sudo plesk ext git --info -domain archive.smallgod.net -name archive-portal-api 2>&1; \
     echo "---"; \
     sudo plesk ext git --get-last-commit -domain archive.smallgod.net -name archive-portal-api 2>&1 | head -5; \
     echo "---"; \
-    sudo /opt/plesk/node/12/bin/node --jitless /opt/plesk/node/12/lib/node_modules/pm2/bin/pm2 list\
+    sudo /opt/plesk/node/22/bin/node --jitless /opt/plesk/node/22/lib/node_modules/pm2/bin/pm2 list\
   '

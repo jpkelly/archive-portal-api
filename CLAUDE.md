@@ -97,9 +97,10 @@ archive_account_maintenance.sh <archive|delete> <domain> <user> <from_date> <to_
 Copy `.env.example` → `.env`. Required: `JWT_SECRET`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`.
 Optional: `PORT` (default 8080), `DB_HOST`/`DB_PORT`, `JWT_EXPIRES_IN`.
 
-AWS credentials at runtime live under the `centos` home: `/home/centos/.aws/`. The API
+AWS credentials at runtime live under the `ubuntu` home: `/home/ubuntu/.aws/`. The API
 explicitly sets `HOME`/`AWS_CONFIG_FILE`/`AWS_SHARED_CREDENTIALS_FILE` when spawning
 scripts (see `awsEnv` in `src/routes/domains.js`); preserve this when adding new spawns.
+The AWS CLI v2 binary is at `/usr/local/bin/aws` (was `/usr/bin/aws` on the old CentOS server).
 
 ## Running locally
 

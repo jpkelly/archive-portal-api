@@ -11,9 +11,9 @@ const router = express.Router();
 const execFileAsync = promisify(execFile);
 const awsEnv = {
   ...process.env,
-  HOME: '/home/centos',
-  AWS_CONFIG_FILE: '/home/centos/.aws/config',
-  AWS_SHARED_CREDENTIALS_FILE: '/home/centos/.aws/credentials',
+  HOME: '/home/ubuntu',
+  AWS_CONFIG_FILE: '/home/ubuntu/.aws/config',
+  AWS_SHARED_CREDENTIALS_FILE: '/home/ubuntu/.aws/credentials',
 };
 const ingestProgressByAccount = new Map();
 const usageScanProgressByDomain = new Map();
@@ -223,7 +223,7 @@ function normalizeArchiveRange(payload) {
 async function verifyS3ObjectExists(s3Uri) {
   if (!s3Uri) return false;
   try {
-    await execFileAsync('/usr/bin/aws', ['s3', 'ls', s3Uri], { env: awsEnv, maxBuffer: 1024 * 1024 });
+    await execFileAsync('/usr/local/bin/aws', ['s3', 'ls', s3Uri], { env: awsEnv, maxBuffer: 1024 * 1024 });
     return true;
   } catch (_) {
     return false;
@@ -611,7 +611,7 @@ async function refreshAccountUsageSnapshot(domain, account, beforeDate) {
 
 async function listArchiveTimestamps() {
   const { stdout } = await execFileAsync(
-    '/usr/bin/aws',
+    '/usr/local/bin/aws',
     ['s3', 'ls', 's3://smallgod-mail-archive/archive/'],
     { env: awsEnv, maxBuffer: 1024 * 1024 }
   );
@@ -654,7 +654,7 @@ async function findOrphanedArchives() {
   let s3All = '';
   try {
     const result = await execFileAsync(
-      '/usr/bin/aws',
+      '/usr/local/bin/aws',
       ['s3', 'ls', '--recursive', 's3://smallgod-mail-archive/archive/'],
       { env: awsEnv, maxBuffer: 8 * 1024 * 1024 }
     );
@@ -706,7 +706,7 @@ async function findAccountArchivePath(domain, username) {
     var stdout = '';
     try {
       var result = await execFileAsync(
-        '/usr/bin/aws',
+        '/usr/local/bin/aws',
         ['s3', 'ls', prefix],
         { env: awsEnv, maxBuffer: 1024 * 1024 }
       );
@@ -993,7 +993,7 @@ router.post('/discover-all', async (req, res) => {
           var prefix = 's3://smallgod-mail-archive/archive/' + ts + '/' + domain.name + '/' + usernameLocal + '/';
           var s3Stdout = '';
           try {
-            var s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
+            var s3Result = await execFileAsync('/usr/local/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
             s3Stdout = s3Result.stdout || '';
           } catch (s3Err) {
             continue;
@@ -1102,7 +1102,7 @@ router.post('/prune-orphans', async (req, res) => {
     for (const orphan of orphans) {
       try {
         await execFileAsync(
-          '/usr/bin/aws',
+          '/usr/local/bin/aws',
           ['s3', 'rm', orphan.prefix, '--recursive', '--only-show-errors'],
           { env: awsEnv, maxBuffer: 1024 * 1024 }
         );
@@ -2031,7 +2031,7 @@ router.post('/:domainId/accounts/:accountId/archive/delete-messages', async (req
         tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'archive-delete-'));
         const manifestPath = path.join(tempDir, path.basename(manifestS3Uri));
         await execFileAsync(
-          '/usr/bin/aws',
+          '/usr/local/bin/aws',
           ['s3', 'cp', manifestS3Uri, manifestPath, '--only-show-errors'],
           { env: awsEnv, maxBuffer: 1024 * 1024 }
         );
@@ -2208,7 +2208,7 @@ router.post('/:domainId/archive/discover', async (req, res) => {
         console.log('[discover] checking ' + prefix);
         var s3Stdout = '';
         try {
-          var s3Result = await execFileAsync('/usr/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
+          var s3Result = await execFileAsync('/usr/local/bin/aws', ['s3', 'ls', prefix], { env: awsEnv, maxBuffer: 1024 * 1024 });
           s3Stdout = s3Result.stdout || '';
         } catch (s3Err) {
           var stderr = String((s3Err && s3Err.stderr) || '').trim();

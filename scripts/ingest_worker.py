@@ -28,10 +28,10 @@ from email.utils import parsedate_to_datetime, parseaddr, getaddresses
 
 
 AWS_ENV = os.environ.copy()
-AWS_ENV.setdefault('HOME', '/home/centos')
-AWS_ENV.setdefault('AWS_CONFIG_FILE', '/home/centos/.aws/config')
-AWS_ENV.setdefault('AWS_SHARED_CREDENTIALS_FILE', '/home/centos/.aws/credentials')
-AWS_BIN = '/usr/bin/aws'
+AWS_ENV.setdefault('HOME', '/home/ubuntu')
+AWS_ENV.setdefault('AWS_CONFIG_FILE', '/home/ubuntu/.aws/config')
+AWS_ENV.setdefault('AWS_SHARED_CREDENTIALS_FILE', '/home/ubuntu/.aws/credentials')
+AWS_BIN = '/usr/local/bin/aws'
 
 # Maximum attachment size to store in the database (25 MB).
 # Larger attachments are skipped with a warning.
