@@ -1756,6 +1756,94 @@ router.get('/:domainId/accounts/:accountId/archive-state', async (req, res) => {
   }
 });
 
+// Stream the archive tarball (tar.gz, includes messages + attachments) from S3
+// to the requesting user's browser. Available to any user with domain access —
+// a domain_admin downloading their own mailbox archive is the primary use case.
+router.get('/:domainId/accounts/:accountId/archive/download', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!(await canAccessDomain(req.auth.sub, domainId, req.auth.role))) {
+      return res.status(403).json({ error: 'Access denied for this domain' });
+    }
+
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    const state = await getArchiveState(accountId);
+    if (!state || !state.archive_s3_uri) {
+      return res.status(404).json({ error: 'No archive available for this account' });
+    }
+
+    // Refuse to serve a running/failed archive — only completed, verified ones.
+    if (state.status !== 'completed' && state.status !== 'completed_no_files') {
+      return res.status(409).json({ error: `Archive not ready (status: ${state.status || 'unknown'})` });
+    }
+    if (!state.verified) {
+      return res.status(409).json({ error: 'Archive exists but has not passed verification' });
+    }
+
+    const s3Uri = state.archive_s3_uri;
+    const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
+    const filename = s3Uri.split('/').pop() || `archive_${domainId}_${accountId}.tar.gz`;
+
+    // Build a download filename like <domain>_<user>_<range>_<stamp>.tar.gz.
+    res.set('Content-Type', 'application/gzip');
+    res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.set('Cache-Control', 'private, no-store');
+    if (state.archive_bytes) {
+      res.set('Content-Length', String(state.archive_bytes));
+    }
+
+    // Stream via the AWS CLI. `aws s3 cp <uri> -` writes the object to stdout.
+    const child = spawn('/usr/local/bin/aws', ['s3', 'cp', s3Uri, '-'], {
+      env: awsEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // Forward S3 stream errors as a truncated (500) response. If any bytes were
+    // already sent the client sees a short download; browsers show that as a
+    // failed transfer, which is the honest outcome for a failed S3 read.
+    let failed = false;
+    child.on('error', (err) => {
+      failed = true;
+      console.error('[archive download] spawn error:', err.message);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'Could not start S3 transfer', detail: err.message });
+      }
+      res.end();
+    });
+
+    child.stdout.on('data', (chunk) => {
+      if (!failed) res.write(chunk);
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        return res.end();
+      }
+      failed = true;
+      console.error(`[archive download] aws s3 cp exited ${code}: ${stderr.trim().slice(0, 300)}`);
+      if (!res.headersSent) {
+        return res.status(500).json({ error: 'S3 download failed', detail: stderr.trim().slice(0, 200) });
+      }
+      res.end(); // truncated response
+    });
+
+    req.on('close', () => {
+      // Client disconnected — kill the S3 transfer to avoid wasted bandwidth.
+      child.kill('SIGKILL');
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not download archive', detail: err.message });
+  }
+});
+
 router.post('/:domainId/accounts/:accountId/archive/create', async (req, res) => {
   const { domainId, accountId } = req.params;
 

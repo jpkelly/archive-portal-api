@@ -601,6 +601,47 @@ async function api(path, options = {}) {
   return data;
 }
 
+// Download an account's verified archive tarball (messages + attachments) from S3.
+// Streams through the API with the auth token; large files go straight to disk
+// via the browser download manager, so memory use stays bounded.
+function downloadAccountArchive(domainId, account) {
+  if (!domainId || !account || !account.id) return;
+  const url = `/domains/${domainId}/accounts/${account.id}/archive/download`;
+
+  setStatus(`Preparing archive download for ${account.username}…`, 'info');
+
+  fetch(url, {
+    headers: state.token ? { Authorization: `Bearer ${state.token}` } : {},
+    cache: 'no-store',
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Download failed (${res.status})`);
+      }
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = disposition.match(/filename="?([^";]+)"?/);
+      const filename = match ? decodeURIComponent(match[1]) : `archive_${account.username || account.id}.tar.gz`;
+
+      // Stream the body to a Blob. The browser may show a download progress
+      // indicator for streamed responses in modern browsers.
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+      setStatus(`Archive download started: ${filename}`, 'info');
+    })
+    .catch((err) => {
+      setStatus(`Error: ${err.message || 'Archive download failed'}`);
+    });
+}
+
 function renderAuthState() {
   const isLoggedIn = Boolean(state.token);
   const isAdmin = Boolean(state.user && state.user.role === 'admin');
@@ -889,6 +930,27 @@ function renderArchiveAccountTable(accounts) {
         });
         detail.appendChild(uriSpan);
         detail.appendChild(copyBtn);
+
+        // Download button for completed, verified archives.
+        const canDownload = archive.verified &&
+          (archive.status === 'completed' || archive.status === 'completed_no_files');
+        if (canDownload) {
+          const dlBtn = document.createElement('button');
+          dlBtn.type = 'button';
+          dlBtn.className = 'button ghost archive-copy-btn';
+          dlBtn.textContent = '\u2913 Download';
+          dlBtn.title = 'Download this archive tarball (includes attachments)';
+          dlBtn.addEventListener('click', () => {
+            dlBtn.disabled = true;
+            dlBtn.textContent = 'Downloading…';
+            downloadAccountArchive(state.domainId, account);
+            setTimeout(() => {
+              dlBtn.disabled = false;
+              dlBtn.textContent = '\u2913 Download';
+            }, 3000);
+          });
+          detail.appendChild(dlBtn);
+        }
       }
       if (archive.verification_checked_at) {
         const verSpan = document.createElement('span');
@@ -2022,6 +2084,25 @@ async function loadAccounts(domainId) {
       li.appendChild(refreshBtn);
     } else {
       li.appendChild(btn);
+    }
+
+    // Download archive button: show when a completed, verified archive exists.
+    // Uses the account's archive_state (already part of the accounts payload).
+    if (account.archive_state && account.archive_state.archive_s3_uri &&
+        (account.archive_state.status === 'completed' || account.archive_state.status === 'completed_no_files') &&
+        account.archive_state.verified) {
+      const dlBtn = document.createElement('button');
+      dlBtn.type = 'button';
+      dlBtn.className = 'button ghost';
+      dlBtn.textContent = '\u2913';
+      dlBtn.style.cssText = 'flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:1.5rem;height:1.5rem;padding:0;font-size:0.9rem;line-height:1;border-radius:999px;min-width:1.5rem;max-width:1.5rem;';
+      dlBtn.title = `Download archive ${account.archive_state.range_label || ''} (tar.gz, includes attachments)\nS3: ${account.archive_state.archive_s3_uri}`;
+      dlBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        downloadAccountArchive(domainId, account);
+      });
+      li.appendChild(dlBtn);
     }
     
     els.accountList.appendChild(li);
