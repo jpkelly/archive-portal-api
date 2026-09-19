@@ -343,6 +343,276 @@ function clearUsageScanProgressLater(domainId, delayMs = 300000) {
   }, delayMs);
 }
 
+// Storage overview: what archive data exists where, and how big it is.
+// Reports BOTH footprints a user can care about:
+//  - DB rows ingested into mail_archive (message metadata + any cached
+//    bodies/attachment BLOBs) — this is the "downloaded to the server" part.
+//    Removal: re-run ingest to clear, or purge bodies per domain/account.
+//  - The original tarballs in S3 — durable storage, always present.
+// Admins see whole-server totals; domain users see only their own domains.
+router.get('/storage/overview', async (req, res) => {
+  try {
+    const isAdmin = req.auth.role === 'admin';
+
+    // Resolve the set of domain IDs visible to this user (all for admin).
+    let domainIds = [];
+    if (isAdmin) {
+      const all = await query('SELECT id FROM domains', []);
+      domainIds = all.map((r) => r.id);
+    } else {
+      const mine = await query(
+        'SELECT domain_id FROM domain_members WHERE user_id = ?',
+        [req.auth.sub]
+      );
+      domainIds = mine.map((r) => r.domain_id);
+    }
+
+    if (!domainIds.length) {
+      return res.json({ storage: { domains: 0, accounts_indexed: 0, messages: 0, db_estimate_bytes: 0, s3_archives: 0, s3_bytes: 0, s3_source_bytes: 0, cached_body_bytes: 0, attachment_blob_bytes: 0 } });
+    }
+
+    const placeholders = domainIds.map(() => '?').join(', ');
+
+    // ---- DB footprint per visible domain -----------------------------------
+    const dbRows = await query(
+      `SELECT d.id AS domain_id, d.name AS domain_name,
+              COUNT(DISTINCT a.id) AS accounts_indexed,
+              COUNT(DISTINCT f.id) AS folders,
+              COUNT(m.id) AS messages,
+              COALESCE(SUM(m.size_bytes), 0) AS message_bytes,
+              COALESCE(SUM(CHAR_LENGTH(m.preview_text)), 0) AS preview_chars,
+              COALESCE(SUM(CHAR_LENGTH(m.body_text)), 0) AS body_text_chars,
+              COALESCE(SUM(CHAR_LENGTH(m.body_html)), 0) AS body_html_chars
+       FROM domains d
+       LEFT JOIN mail_accounts a ON a.domain_id = d.id
+       LEFT JOIN folders f ON f.account_id = a.id
+       LEFT JOIN messages m ON m.folder_id = f.id
+       WHERE d.id IN (${placeholders})
+       GROUP BY d.id, d.name`,
+      domainIds
+    );
+
+    // Cached bodies exist where body_text/body_html is non-NULL. Estimate
+    // their share: chars * ~3 bytes/char worst case (utf8mb4) is a rough but
+    // honest upper bound for the on-disk InnoDB footprint.
+    const attBlobs = await query(
+      `SELECT f.account_id, COALESCE(SUM(LENGTH(at.content)), 0) AS blob_bytes
+       FROM attachments at
+       JOIN messages m ON m.id = at.message_id
+       JOIN folders f ON f.id = m.folder_id
+       WHERE at.content IS NOT NULL
+       GROUP BY f.account_id`
+    );
+    const blobByAccount = {};
+    (attBlobs || []).forEach((r) => { blobByAccount[r.account_id] = Number(r.blob_bytes || 0); });
+
+    // ---- S3 archive footprint per visible domain ---------------------------
+    const s3Rows = await query(
+      `SELECT d.id AS domain_id, d.name AS domain_name,
+              COUNT(ma.id) AS s3_archives,
+              COALESCE(SUM(ma.archive_bytes), 0) AS s3_bytes,
+              COALESCE(SUM(ma.archive_source_bytes), 0) AS s3_source_bytes,
+              COALESCE(SUM(ma.archive_file_count), 0) AS s3_files
+       FROM domains d
+       LEFT JOIN mail_accounts a ON a.domain_id = d.id
+       LEFT JOIN mail_account_archives ma ON ma.account_id = a.id
+       WHERE d.id IN (${placeholders})
+       GROUP BY d.id, d.name`,
+      domainIds
+    );
+    const s3ByDomain = {};
+    (s3Rows || []).forEach((r) => { s3ByDomain[r.domain_id] = r; });
+
+    // Per-domain assembly (blob bytes joined via account -> domain).
+    const accountDomains = await query(
+      `SELECT a.id AS account_id, a.domain_id FROM mail_accounts a WHERE a.domain_id IN (${placeholders})`,
+      domainIds
+    );
+    const domainOfAccount = {};
+    (accountDomains || []).forEach((r) => { domainOfAccount[r.account_id] = r.domain_id; });
+
+    let cachedBodyBytes = 0;
+    let attachmentBlobBytes = 0;
+    const perDomain = dbRows.map((r) => {
+      const s3 = s3ByDomain[r.domain_id] || {};
+      const previewBytes = Number(r.preview_chars || 0) * 3;
+      const bodyTextBytes = Number(r.body_text_chars || 0) * 3;
+      const bodyHtmlBytes = Number(r.body_html_chars || 0) * 3;
+      const metadataEstimate = Number(r.message_bytes || 0) + previewBytes;
+      const bodyEstimate = bodyTextBytes + bodyHtmlBytes;
+
+      // Attach this domain's blob bytes.
+      let domainBlobs = 0;
+      Object.keys(blobByAccount).forEach((acctId) => {
+        if (domainOfAccount[acctId] === r.domain_id) domainBlobs += blobByAccount[acctId];
+      });
+      cachedBodyBytes += bodyEstimate;
+      attachmentBlobBytes += domainBlobs;
+
+      return {
+        domain_id: r.domain_id,
+        domain_name: r.domain_name,
+        accounts_indexed: Number(r.accounts_indexed || 0),
+        folders: Number(r.folders || 0),
+        messages: Number(r.messages || 0),
+        db_estimate_bytes: metadataEstimate + bodyEstimate + domainBlobs,
+        cached_body_bytes: bodyEstimate,
+        attachment_blob_bytes: domainBlobs,
+        s3_archives: Number(s3.s3_archives || 0),
+        s3_bytes: Number(s3.s3_bytes || 0),
+        s3_source_bytes: Number(s3.s3_source_bytes || 0),
+        s3_files: Number(s3.s3_files || 0),
+      };
+    });
+
+    const totals = perDomain.reduce((acc, d) => ({
+      domains: acc.domains + 1,
+      accounts_indexed: acc.accounts_indexed + d.accounts_indexed,
+      messages: acc.messages + d.messages,
+      db_estimate_bytes: acc.db_estimate_bytes + d.db_estimate_bytes,
+      cached_body_bytes: acc.cached_body_bytes + d.cached_body_bytes,
+      attachment_blob_bytes: acc.attachment_blob_bytes + d.attachment_blob_bytes,
+      s3_archives: acc.s3_archives + d.s3_archives,
+      s3_bytes: acc.s3_bytes + d.s3_bytes,
+      s3_source_bytes: acc.s3_source_bytes + d.s3_source_bytes,
+      s3_files: acc.s3_files + d.s3_files,
+    }), {
+      domains: 0, accounts_indexed: 0, messages: 0, db_estimate_bytes: 0,
+      cached_body_bytes: 0, attachment_blob_bytes: 0, s3_archives: 0,
+      s3_bytes: 0, s3_source_bytes: 0, s3_files: 0,
+    });
+
+    return res.json({ scope: isAdmin ? 'server' : 'user', storage: totals, per_domain: perDomain });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not fetch storage overview', detail: err.message });
+  }
+});
+
+// Remove ALL indexed mail data for one account from the mail_archive DB
+// (messages, folders, cached bodies, attachment BLOBs). The S3 tarball and
+// the live maildir are NOT touched — the account can be re-ingested any time.
+router.delete('/:domainId/accounts/:accountId/indexed-data', async (req, res) => {
+  const { domainId, accountId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const account = await getAccountDomainAndUser(domainId, accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' });
+    }
+
+    // Count what we're about to remove, for the response.
+    const counts = await query(
+      `SELECT COUNT(m.id) AS messages
+       FROM messages m JOIN folders f ON f.id = m.folder_id
+       WHERE f.account_id = ?`,
+      [accountId]
+    );
+    const msgCount = Number((counts[0] && counts[0].messages) || 0);
+
+    // Attachments first (no FK cascade in MariaDB here — delete explicitly).
+    await query(
+      `DELETE at FROM attachments at
+       JOIN messages m ON m.id = at.message_id
+       JOIN folders f ON f.id = m.folder_id
+       WHERE f.account_id = ?`,
+      [accountId]
+    );
+    await query('DELETE FROM messages WHERE folder_id IN (SELECT id FROM folders WHERE account_id = ?)', [accountId]);
+    await query('DELETE FROM folders WHERE account_id = ?', [accountId]);
+    // Reset the account's index counters so the UI shows it as not indexed.
+    await query(
+      'UPDATE mail_accounts SET message_count = 0, folder_count = 0, last_indexed_at = NULL WHERE id = ?',
+      [accountId]
+    );
+
+    // Audit log the removal.
+    await query(
+      `INSERT INTO audit_events (id, user_id, domain_id, action, target_type, target_id, metadata, created_at)
+       VALUES (UUID(), ?, ?, 'indexed_data_removed', 'account', ?, ?, NOW())`,
+      [req.auth.sub, domainId, accountId, JSON.stringify({ messages: msgCount, username: account.username })]
+    ).catch(() => {});
+
+    return res.json({
+      ok: true,
+      account_id: accountId,
+      removed_messages: msgCount,
+      message: `Removed ${msgCount} indexed messages for ${account.username}. S3 archive untouched; re-run ingest to restore browsing.`
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not remove indexed data', detail: err.message });
+  }
+});
+
+// Domain-level variant: remove indexed data for ALL accounts in the domain.
+router.delete('/:domainId/indexed-data', async (req, res) => {
+  const { domainId } = req.params;
+
+  try {
+    if (!requireAdmin(req, res)) return;
+
+    const domains = await query('SELECT id, name FROM domains WHERE id = ? LIMIT 1', [domainId]);
+    const domain = domains[0];
+    if (!domain) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    // Pre-count for the response.
+    const counts = await query(
+      `SELECT COUNT(m.id) AS messages
+       FROM messages m
+       JOIN folders f ON f.id = m.folder_id
+       JOIN mail_accounts a ON a.id = f.account_id
+       WHERE a.domain_id = ?`,
+      [domainId]
+    );
+    const msgCount = Number((counts[0] && counts[0].messages) || 0);
+
+    // Attachments -> messages -> folders for every account in the domain.
+    await query(
+      `DELETE at FROM attachments at
+       JOIN messages m ON m.id = at.message_id
+       JOIN folders f ON f.id = m.folder_id
+       JOIN mail_accounts a ON a.id = f.account_id
+       WHERE a.domain_id = ?`,
+      [domainId]
+    );
+    await query(
+      `DELETE m FROM messages m
+       JOIN folders f ON f.id = m.folder_id
+       JOIN mail_accounts a ON a.id = f.account_id
+       WHERE a.domain_id = ?`,
+      [domainId]
+    );
+    await query(
+      `DELETE f FROM folders f
+       JOIN mail_accounts a ON a.id = f.account_id
+       WHERE a.domain_id = ?`,
+      [domainId]
+    );
+    await query(
+      'UPDATE mail_accounts SET message_count = 0, folder_count = 0, last_indexed_at = NULL WHERE domain_id = ?',
+      [domainId]
+    );
+
+    await query(
+      `INSERT INTO audit_events (id, user_id, domain_id, action, target_type, target_id, metadata, created_at)
+       VALUES (UUID(), ?, ?, 'indexed_data_removed', 'domain', ?, ?, NOW())`,
+      [req.auth.sub, domainId, domainId, JSON.stringify({ messages: msgCount, domain: domain.name })]
+    ).catch(() => {});
+
+    return res.json({
+      ok: true,
+      domain_id: domainId,
+      removed_messages: msgCount,
+      message: `Removed ${msgCount} indexed messages for ${domain.name}. S3 archive tarballs untouched; re-run ingest to restore browsing.`
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not remove indexed data', detail: err.message });
+  }
+});
+
 function normalizeUsageBeforeDate(value) {
   const parsed = parseIsoDateOnly(String(value || ''));
   if (parsed) return parsed;

@@ -66,6 +66,80 @@ body {
   color: var(--muted);
 }
 
+/* Storage overview bar (below the header) */
+.storage-overview {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-top: 12px;
+  font-size: 0.85rem;
+}
+
+.storage-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.storage-summary-text {
+  line-height: 1.5;
+}
+
+.storage-refresh-btn {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  font-size: 0.85rem;
+}
+
+.storage-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-top: 6px;
+  user-select: none;
+}
+
+.storage-details-body {
+  margin-top: 8px;
+  display: grid;
+  gap: 10px;
+}
+
+.storage-domain-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
+.storage-domain-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.storage-metrics {
+  color: var(--muted);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.storage-remove-btn {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+}
+
 .card,
 .panel {
   background: var(--panel);

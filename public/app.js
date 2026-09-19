@@ -219,6 +219,11 @@ const els = {
   adminUsageSelectedDomainOnly: document.getElementById('adminUsageSelectedDomainOnly'),
   adminUsageStatus: document.getElementById('adminUsageStatus'),
   adminUsageTable: document.getElementById('adminUsageTable'),
+  storageOverview: document.getElementById('storageOverview'),
+  storageSummaryText: document.getElementById('storageSummaryText'),
+  storageRefreshBtn: document.getElementById('storageRefreshBtn'),
+  storageDetails: document.getElementById('storageDetails'),
+  storageDetailsBody: document.getElementById('storageDetailsBody'),
   portalTabs: document.getElementById('portalTabs'),
   tabEmailViewer: document.getElementById('tabEmailViewer'),
   tabAdminPanel: document.getElementById('tabAdminPanel'),
@@ -235,6 +240,139 @@ function formatBytes(bytes) {
     idx += 1;
   }
   return `${n.toFixed(n >= 100 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+}
+
+// ---------------------------------------------------------------------------
+// Storage overview (header area): how much archive data is on the server,
+// where it lives (DB index vs S3 tarballs), and how to remove the server copy.
+// ---------------------------------------------------------------------------
+async function loadStorageOverview() {
+  if (!state.token || !els.storageOverview) return;
+
+  try {
+    const data = await api('/domains/storage/overview');
+    renderStorageOverview(data);
+  } catch (err) {
+    // Non-fatal — hide the bar rather than block the portal.
+    els.storageOverview.classList.add('hidden');
+  }
+}
+
+function renderStorageOverview(data) {
+  const s = data && data.storage;
+  if (!s) {
+    els.storageOverview.classList.add('hidden');
+    return;
+  }
+
+  els.storageOverview.classList.remove('hidden');
+
+  const scopeNote = data.scope === 'server'
+    ? ' (all domains on server)'
+    : '';
+  const lines = [];
+  if (s.messages > 0) {
+    lines.push(`📥 Indexed on server: ${formatBytes(s.db_estimate_bytes)} across ${s.messages.toLocaleString()} messages in ${s.accounts_indexed} account${s.accounts_indexed !== 1 ? 's' : ''}${scopeNote}`);
+  } else {
+    lines.push('📥 Nothing indexed on the server yet — browsing data appears here after an account is ingested.');
+  }
+  if (s.s3_archives > 0) {
+    lines.push(`☁️ S3 archives: ${s.s3_archives} tarball${s.s3_archives !== 1 ? 's' : ''}, ${formatBytes(s.s3_bytes)} (${formatBytes(s.s3_source_bytes)} uncompressed)`);
+  } else {
+    lines.push('☁️ No S3 archives registered yet.');
+  }
+
+  els.storageSummaryText.innerHTML = lines
+    .map((l) => `<span style="display:block">${l}</span>`)
+    .join('');
+
+  // Details body: per-domain breakdown + removal actions (admin only).
+  const isAdmin = Boolean(state.user && state.user.role === 'admin');
+  const perDomain = data.per_domain || [];
+  const body = els.storageDetailsBody;
+  body.innerHTML = '';
+
+  if (!perDomain.length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.style.cssText = 'margin:0;font-size:0.8rem;';
+    p.textContent = 'No domains accessible.';
+    body.appendChild(p);
+  } else {
+    perDomain.forEach((d) => {
+      const row = document.createElement('div');
+      row.className = 'storage-domain-row';
+
+      const name = document.createElement('span');
+      name.className = 'storage-domain-name';
+      name.textContent = d.domain_name;
+
+      const metrics = document.createElement('span');
+      metrics.className = 'storage-metrics';
+      const metricParts = [];
+      if (d.messages > 0) {
+        metricParts.push(`server index: ${formatBytes(d.db_estimate_bytes)} (${d.messages.toLocaleString()} msgs)`);
+      } else {
+        metricParts.push('server index: none');
+      }
+      if (d.s3_archives > 0) {
+        metricParts.push(`S3: ${d.s3_archives} \u00d7 ${formatBytes(d.s3_bytes)}`);
+      }
+      if (d.cached_body_bytes > 0) {
+        metricParts.push(`bodies: ${formatBytes(d.cached_body_bytes)}`);
+      }
+      if (d.attachment_blob_bytes > 0) {
+        metricParts.push(`att. blobs: ${formatBytes(d.attachment_blob_bytes)}`);
+      }
+      metrics.textContent = metricParts.join(' \u00b7 ');
+
+      row.appendChild(name);
+      row.appendChild(metrics);
+
+      if (isAdmin && d.messages > 0) {
+        // "Clear server copy" — removes indexed DB rows for this domain.
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'button ghost storage-remove-btn';
+        btn.textContent = 'Clear server copy';
+        btn.title = 'Delete this domain\'s indexed message data from the server DB. S3 archive tarballs are kept — you can re-ingest any time.';
+        btn.addEventListener('click', async () => {
+          if (!window.confirm(`Remove ALL indexed message data for ${d.domain_name} from the server?\n\nThis deletes ${d.messages.toLocaleString()} indexed messages (${formatBytes(d.db_estimate_bytes)}) from the server database. The S3 archive tarballs are NOT touched, and the account can be re-ingested at any time from the account list.`)) {
+            return;
+          }
+          btn.disabled = true;
+          btn.textContent = 'Clearing\u2026';
+          try {
+            const result = await api(`/domains/${d.domain_id}/indexed-data`, { method: 'DELETE' });
+            setStatus(`Info: ${result.message || 'Server copy cleared.'}`, 'info');
+            await loadStorageOverview();
+            // Refresh account lists — message counts are now zero.
+            if (state.domainId) await loadAccounts(state.domainId);
+            if (state.user && state.user.role === 'admin' && state.selectedDomain) {
+              await loadAdminDomain(state.selectedDomain.id).catch(() => {});
+            }
+          } catch (err) {
+            setStatus(`Error: ${err.message}`);
+            btn.disabled = false;
+            btn.textContent = 'Clear server copy';
+          }
+        });
+        row.appendChild(btn);
+      }
+
+      body.appendChild(row);
+    });
+  }
+
+  // Explanatory footer inside details.
+  const help = document.createElement('p');
+  help.className = 'muted';
+  help.style.cssText = 'margin:0;font-size:0.75rem;line-height:1.5;';
+  help.textContent =
+    'Server index = message metadata + cached bodies stored in the mail_archive database so the portal can browse/search mail without touching S3. ' +
+    'S3 archives = the original .tar.gz backup tarballs (durable, off-site). ' +
+    'Clearing the server copy frees database space but keeps the S3 tarballs; re-run ingest (↻ on an account) to rebuild the index at any time.';
+  body.appendChild(help);
 }
 
 function normalizeDateOnlyText(value) {
@@ -648,6 +786,9 @@ function renderAuthState() {
   els.loginCard.classList.toggle('hidden', isLoggedIn);
   els.logoutBtn.classList.toggle('hidden', !isLoggedIn);
   els.portalTabs.classList.toggle('hidden', !(isLoggedIn && isAdmin));
+  if (els.storageOverview) {
+    els.storageOverview.classList.toggle('hidden', !isLoggedIn);
+  }
   if (!isLoggedIn) {
     els.portal.classList.add('hidden');
     els.adminPanel.classList.add('hidden');
@@ -2466,6 +2607,7 @@ async function bootstrapFromToken() {
     state.user = me.user;
     renderAuthState();
     await loadDomains();
+    loadStorageOverview().catch(() => {});
     if (state.domains.length) {
       const preferredDomainId = getStoredDomainId();
       const preferredDomain = state.domains.find((d) => d.id === preferredDomainId) || state.domains[0];
@@ -2520,6 +2662,7 @@ els.loginForm.addEventListener('submit', async (event) => {
     }
     els.password.value = '';
     setStatus('Info: Logged in. Re-indexing is running in the background and counts will populate as processing completes.', 'info');
+    loadStorageOverview().catch(() => {});
     setTimeout(() => {
       queueReindexAllAccessibleAccounts().catch((err) => {
         setStatus(`Error: ${err.message}`);
@@ -3127,6 +3270,12 @@ els.messageNextBtn.addEventListener('click', async () => {
   state.messageOffset = nextOffset;
   await loadMessages(state.folderId);
 });
+
+if (els.storageRefreshBtn) {
+  els.storageRefreshBtn.addEventListener('click', () => {
+    loadStorageOverview();
+  });
+}
 
 els.logoutBtn.addEventListener('click', async () => {
   try {
