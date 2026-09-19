@@ -2034,9 +2034,12 @@ router.get('/:domainId/accounts/:accountId/archive-state', async (req, res) => {
   }
 });
 
-// Stream the archive tarball (tar.gz, includes messages + attachments) from S3
-// to the requesting user's browser. Available to any user with domain access —
-// a domain_admin downloading their own mailbox archive is the primary use case.
+// Serve an archive tarball download. Instead of proxying the (potentially
+// multi-GB) object through Node and the nginx proxy — which stalls, buffers
+// the whole body in browser memory, and trips proxy read timeouts ("unable
+// to fetch" for users) — this returns a short-lived presigned S3 URL so the
+// browser downloads DIRECTLY from S3 with its native download manager:
+// progress bar, resumable, no server bandwidth, no memory ceiling.
 router.get('/:domainId/accounts/:accountId/archive/download', async (req, res) => {
   const { domainId, accountId } = req.params;
 
@@ -2064,61 +2067,40 @@ router.get('/:domainId/accounts/:accountId/archive/download', async (req, res) =
     }
 
     const s3Uri = state.archive_s3_uri;
-    const usernameLocal = String(account.username || '').split('@')[0].toLowerCase();
     const filename = s3Uri.split('/').pop() || `archive_${domainId}_${accountId}.tar.gz`;
 
-    // Build a download filename like <domain>_<user>_<range>_<stamp>.tar.gz.
-    res.set('Content-Type', 'application/gzip');
-    res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-    res.set('Cache-Control', 'private, no-store');
-    if (state.archive_bytes) {
-      res.set('Content-Length', String(state.archive_bytes));
+    // Generate a presigned URL (15-minute validity) via the AWS CLI.
+    const { stdout } = await execFileAsync(
+      '/usr/local/bin/aws',
+      ['s3', 'presign', s3Uri, '--expires-in', '900'],
+      { env: awsEnv, maxBuffer: 64 * 1024, timeout: 30000 }
+    );
+
+    const presignedUrl = String(stdout || '').trim();
+    if (!presignedUrl.startsWith('https://')) {
+      throw new Error('presign returned an unexpected result');
     }
 
-    // Stream via the AWS CLI. `aws s3 cp <uri> -` writes the object to stdout.
-    const child = spawn('/usr/local/bin/aws', ['s3', 'cp', s3Uri, '-'], {
-      env: awsEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    // Audit the download attempt (who pulled which archive, when).
+    await query(
+      `INSERT INTO audit_events (id, user_id, domain_id, action, target_type, target_id, metadata, created_at)
+       VALUES (UUID(), ?, ?, 'archive_download', 'account', ?, ?, NOW())`,
+      [req.auth.sub, domainId, accountId, JSON.stringify({ filename, s3_uri: s3Uri })]
+    ).catch(() => {});
 
-    // Forward S3 stream errors as a truncated (500) response. If any bytes were
-    // already sent the client sees a short download; browsers show that as a
-    // failed transfer, which is the honest outcome for a failed S3 read.
-    let failed = false;
-    child.on('error', (err) => {
-      failed = true;
-      console.error('[archive download] spawn error:', err.message);
-      if (!res.headersSent) {
-        return res.status(500).json({ error: 'Could not start S3 transfer', detail: err.message });
-      }
-      res.end();
-    });
-
-    child.stdout.on('data', (chunk) => {
-      if (!failed) res.write(chunk);
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        return res.end();
-      }
-      failed = true;
-      console.error(`[archive download] aws s3 cp exited ${code}: ${stderr.trim().slice(0, 300)}`);
-      if (!res.headersSent) {
-        return res.status(500).json({ error: 'S3 download failed', detail: stderr.trim().slice(0, 200) });
-      }
-      res.end(); // truncated response
-    });
-
-    req.on('close', () => {
-      // Client disconnected — kill the S3 transfer to avoid wasted bandwidth.
-      child.kill('SIGKILL');
+    // Return the URL as JSON. The frontend opens it in a new tab so the
+    // browser's download manager handles the transfer natively.
+    return res.json({
+      ok: true,
+      account_id: accountId,
+      filename,
+      size_bytes: state.archive_bytes || null,
+      url: presignedUrl,
+      expires_in_seconds: 900,
     });
   } catch (err) {
-    return res.status(500).json({ error: 'Could not download archive', detail: err.message });
+    console.error('[archive download] presign failed:', err.message);
+    return res.status(500).json({ error: 'Could not prepare archive download', detail: err.message });
   }
 });
 

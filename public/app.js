@@ -798,23 +798,16 @@ function downloadAccountArchive(domainId, account) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `Download failed (${res.status})`);
       }
-      const disposition = res.headers.get('Content-Disposition') || '';
-      const match = disposition.match(/filename="?([^";]+)"?/);
-      const filename = match ? decodeURIComponent(match[1]) : `archive_${account.username || account.id}.tar.gz`;
-
-      // Stream the body to a Blob. The browser may show a download progress
-      // indicator for streamed responses in modern browsers.
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-
-      setStatus(`Archive download started: ${filename}`, 'info');
+      const data = await res.json();
+      if (!data.url) {
+        throw new Error('Download URL missing from response');
+      }
+      // The presigned URL points directly at S3. Opening it hands the
+      // transfer to the browser's native download manager — real progress
+      // bar, resumable, no memory ceiling, no proxy in the path.
+      window.open(data.url, '_blank');
+      const sizeNote = data.size_bytes ? ` (${formatBytes(data.size_bytes)})` : '';
+      setStatus(`Archive download started${sizeNote}. If nothing appears, check your pop-up blocker.`, 'info');
     })
     .catch((err) => {
       setStatus(`Error: ${err.message || 'Archive download failed'}`);
