@@ -374,12 +374,17 @@ router.get('/storage/overview', async (req, res) => {
     const placeholders = domainIds.map(() => '?').join(', ');
 
     // ---- DB footprint per visible domain -----------------------------------
+    // The DB stores metadata rows (+ any cached bodies / attachment BLOBs),
+    // NOT the raw .eml bytes — those live in the S3 tarball. Estimate the
+    // on-disk InnoDB footprint as: per-row overhead (headers, indexes, row
+    // structure; ~1.5 KB) + stored text content (chars * 3 for utf8mb4) + BLOBs.
+    const DB_ROW_OVERHEAD_BYTES = 1536;
     const dbRows = await query(
       `SELECT d.id AS domain_id, d.name AS domain_name,
               COUNT(DISTINCT a.id) AS accounts_indexed,
               COUNT(DISTINCT f.id) AS folders,
               COUNT(m.id) AS messages,
-              COALESCE(SUM(m.size_bytes), 0) AS message_bytes,
+              COALESCE(SUM(m.size_bytes), 0) AS mail_bytes,
               COALESCE(SUM(CHAR_LENGTH(m.preview_text)), 0) AS preview_chars,
               COALESCE(SUM(CHAR_LENGTH(m.body_text)), 0) AS body_text_chars,
               COALESCE(SUM(CHAR_LENGTH(m.body_html)), 0) AS body_html_chars
@@ -438,7 +443,9 @@ router.get('/storage/overview', async (req, res) => {
       const previewBytes = Number(r.preview_chars || 0) * 3;
       const bodyTextBytes = Number(r.body_text_chars || 0) * 3;
       const bodyHtmlBytes = Number(r.body_html_chars || 0) * 3;
-      const metadataEstimate = Number(r.message_bytes || 0) + previewBytes;
+      const messages = Number(r.messages || 0);
+      // Per-row DB overhead (headers/indexes/row structure) + preview text.
+      const metadataEstimate = messages * DB_ROW_OVERHEAD_BYTES + previewBytes;
       const bodyEstimate = bodyTextBytes + bodyHtmlBytes;
 
       // Attach this domain's blob bytes.
@@ -454,7 +461,8 @@ router.get('/storage/overview', async (req, res) => {
         domain_name: r.domain_name,
         accounts_indexed: Number(r.accounts_indexed || 0),
         folders: Number(r.folders || 0),
-        messages: Number(r.messages || 0),
+        messages: messages,
+        mail_bytes: Number(r.mail_bytes || 0),
         db_estimate_bytes: metadataEstimate + bodyEstimate + domainBlobs,
         cached_body_bytes: bodyEstimate,
         attachment_blob_bytes: domainBlobs,
