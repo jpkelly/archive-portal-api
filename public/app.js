@@ -224,6 +224,7 @@ const els = {
   storageRefreshBtn: document.getElementById('storageRefreshBtn'),
   storageDetails: document.getElementById('storageDetails'),
   storageDetailsBody: document.getElementById('storageDetailsBody'),
+  bootProgress: document.getElementById('bootProgress'),
   portalTabs: document.getElementById('portalTabs'),
   tabEmailViewer: document.getElementById('tabEmailViewer'),
   tabAdminPanel: document.getElementById('tabAdminPanel'),
@@ -638,6 +639,44 @@ function setStatus(message, level = 'error') {
   els.status.classList.remove('status-error', 'status-info');
   if (!message) return;
   els.status.classList.add(level === 'info' ? 'status-info' : 'status-error');
+}
+
+// Boot progress indicator: shows a live "what's happening" line while the
+// portal loads after login/session-restore, so the initial seconds aren't a
+// silent void. Steps cover domain list load -> account list -> folder list
+// -> message list, then clear themselves once everything is ready.
+const BOOT_STEPS = [
+  { key: 'auth', label: 'Signing in' },
+  { key: 'domains', label: 'Loading domains' },
+  { key: 'accounts', label: 'Loading accounts' },
+  { key: 'folders', label: 'Loading folders' },
+  { key: 'messages', label: 'Loading messages' },
+];
+
+function setBootProgress(stepKey, detail) {
+  const line = els.bootProgress;
+  if (!line) return;
+  const idx = BOOT_STEPS.findIndex((s) => s.key === stepKey);
+  if (idx === -1) return;
+  const parts = [];
+  for (let i = 0; i < BOOT_STEPS.length; i++) {
+    const s = BOOT_STEPS[i];
+    if (i < idx) parts.push('&#10003; ' + s.label);
+    else if (i === idx) parts.push('<span class="boot-active">&#8987; ' + s.label + '</span>');
+  }
+  let html = parts.join(' &rarr; ');
+  if (idx === BOOT_STEPS.length - 1 && detail) {
+    html += ' <span class="boot-detail">(' + detail + ')</span>';
+  }
+  line.innerHTML = html;
+  line.classList.remove('hidden');
+}
+
+function clearBootProgress() {
+  const line = els.bootProgress;
+  if (!line) return;
+  line.classList.add('hidden');
+  line.innerHTML = '';
 }
 
 function setLoginBusy(busy) {
@@ -1827,8 +1866,13 @@ async function openDomain(domain) {
 }
 
 async function loadDomains() {
-  const data = await api('/domains');
-  state.domains = data.domains || [];
+  setBootProgress('domains');
+  try {
+    const data = await api('/domains');
+    state.domains = data.domains || [];
+  } finally {
+    if (!state.domains.length) clearBootProgress();
+  }
   if (state.user && state.user.role === 'admin') {
     populateAdminControls(state.selectedDomain);
   }
@@ -2033,11 +2077,13 @@ async function loadAccounts(domainId) {
     els.accountDomainLabel.textContent = domain ? '— ' + domain.name : '';
   }
 
+  setBootProgress('accounts');
   var data;
   try {
     data = await api('/domains/' + domainId + '/accounts');
   } catch (err) {
     // Keep the current list visible on transient fetch errors.
+    clearBootProgress();
     return;
   }
   var accountList = data.accounts || [];
@@ -2053,6 +2099,7 @@ async function loadAccounts(domainId) {
   els.accountList.innerHTML = '';
   if (!accountList.length) {
     clearList(els.accountList, 'No accounts found.');
+    clearBootProgress();
     return;
   }
 
@@ -2257,10 +2304,17 @@ async function loadAccounts(domainId) {
     
     els.accountList.appendChild(li);
   });
+
+  // Accounts rendered — the portal is now usable (user picks an account to
+  // load folders). End the boot sequence here unless we are mid-polling.
+  if (syncingAccounts.size === 0) {
+    clearBootProgress();
+  }
 }
 
 
 async function loadFolders(domainId, accountId) {
+  setBootProgress('folders');
   const data = await api(`/domains/${domainId}/accounts/${accountId}/folders`);
   renderButtonList(
     els.folderList,
@@ -2301,7 +2355,9 @@ async function loadMessages(folderId) {
   if (state.messageDateTo) {
     params.set('toDate', state.messageDateTo);
   }
+  setBootProgress('messages');
   const data = await api(`/messages/folders/${folderId}/messages?${params.toString()}`);
+  clearBootProgress();
   state.messageTotal = Number(data.total || 0);
   renderButtonList(
     els.messageList,
@@ -2611,6 +2667,7 @@ async function bootstrapFromToken() {
     return;
   }
 
+  setBootProgress('auth');
   try {
     const me = await api('/auth/me');
     state.user = me.user;
@@ -2632,6 +2689,7 @@ async function bootstrapFromToken() {
     localStorage.removeItem('archivePortalToken');
     state.token = '';
     state.user = null;
+    clearBootProgress();
     renderAuthState();
     setStatus(err.message);
   }
@@ -2641,6 +2699,7 @@ els.loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   setStatus('');
   setLoginBusy(true);
+  setBootProgress('auth');
 
   try {
     const payload = {
@@ -2678,6 +2737,7 @@ els.loginForm.addEventListener('submit', async (event) => {
       });
     }, 0);
   } catch (err) {
+    clearBootProgress();
     setStatus(err.message);
   } finally {
     setLoginBusy(false);

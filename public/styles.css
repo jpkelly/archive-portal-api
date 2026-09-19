@@ -140,6 +140,28 @@ body {
   font-size: 0.75rem;
 }
 
+/* Boot progress line (login/session-restore loading steps) */
+.boot-progress {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  line-height: 1.6;
+}
+
+.boot-progress .boot-active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.boot-progress .boot-detail {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .card,
 .panel {
   background: var(--panel);
